@@ -1,0 +1,38 @@
+{
+  "name": "tally-receipts-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "ng serve --proxy-config proxy.conf.json --host 0.0.0.0",
+    "build": "ng build",
+    "test": "tsx --test src/app/*.spec.ts"
+  },
+  "dependencies": {
+    "@angular/animations": "~17.3.12",
+    "@angular/common": "~17.3.12",
+    "@angular/compiler": "~17.3.12",
+    "@angular/core": "~17.3.12",
+    "@angular/forms": "~17.3.12",
+    "@angular/platform-browser": "~17.3.12",
+    "@angular/platform-browser-dynamic": "~17.3.12",
+    "@angular/router": "~17.3.12",
+    "@fontsource/dm-sans": "^5.2.6",
+    "@fontsource/manrope": "^5.2.6",
+    "primeicons": "^7.0.0",
+    "primeng": "~17.18.15",
+    "rxjs": "~7.8.1",
+    "tslib": "^2.6.2",
+    "zone.js": "~0.14.10"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "~17.3.12",
+    "@angular/cli": "~17.3.12",
+    "@angular/compiler-cli": "~17.3.12",
+    "@types/node": "^18.19.0",
+    "tsx": "^4.19.2",
+    "typescript": "~5.4.5"
+  },
+  "engines": {
+    "node": ">=18.13 <23"
+  }
+}

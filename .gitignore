@@ -1,0 +1,19 @@
+# Private receipts and database
+backend/data/
+backend/*.sqlite*
+*.db
+*.sqlite*
+
+# Build products
+backend/.gradle/
+backend/build/
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+
+# Editor and environment
+.env
+.idea/
+.vscode/
+*.iml
+.DS_Store
