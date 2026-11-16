@@ -26,7 +26,7 @@ USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates xz-utils \
     && NODE_ARCH=x64 \
-    && { [ "$TARGETARCH" = "arm64" ] && NODE_ARCH=arm64; } \
+    && if [ "$TARGETARCH" = "arm64" ]; then NODE_ARCH=arm64; fi \
     && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz \
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
     && rm /tmp/node.tar.xz \
