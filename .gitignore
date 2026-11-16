@@ -1,6 +1,7 @@
 # Private receipts and database
 backend/data/
 data/
+samples/
 backend/*.sqlite*
 *.db
 *.sqlite*
