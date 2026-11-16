@@ -16,6 +16,7 @@ export interface Group {
 }
 
 export type ShareMode = 'AMOUNT' | 'PERCENT';
+export type DiscountMode = 'PRICE' | 'FINAL';
 
 export interface Share {
   memberId: string;
@@ -28,12 +29,16 @@ export interface ReceiptItem {
   amount: number;
   mode: ShareMode;
   shares: Share[];
+  /** Marked savings on this item, in cents. */
+  discount: number;
+  /** PRICE keeps the discount on the item; FINAL shares it with everyone proportionally. */
+  discountMode: DiscountMode;
 }
 
 export interface Receipt {
   id: string;
   groupId: string;
-  status: 'DRAFT' | 'CONFIRMED';
+  status: 'DRAFT' | 'CONFIRMED' | 'PAID';
   store: string;
   date: string | null;
   subtotal: number;

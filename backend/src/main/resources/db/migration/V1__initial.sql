@@ -20,7 +20,7 @@ CREATE TABLE members (
 CREATE TABLE receipts (
     id TEXT PRIMARY KEY,
     group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    status TEXT NOT NULL CHECK (status IN ('DRAFT', 'CONFIRMED')),
+    status TEXT NOT NULL CHECK (status IN ('DRAFT', 'CONFIRMED', 'PAID')),
     file_name TEXT,
     stored_name TEXT,
     media_type TEXT,

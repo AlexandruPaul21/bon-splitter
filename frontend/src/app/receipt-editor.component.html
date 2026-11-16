@@ -2,7 +2,7 @@
   <div class="editor-topbar">
     <button type="button" class="text-button back-button" (click)="close.emit()" aria-label="Back to receipts"><i class="pi pi-arrow-left"></i> Back to receipts</button>
     <div class="topbar-actions">
-      <p-tag [value]="isDraft ? 'Draft' : 'Confirmed'" [severity]="isDraft ? 'warning' : 'success'"></p-tag>
+      <p-tag [value]="isDraft ? 'Draft' : (receipt.status === 'PAID' ? 'Paid' : 'Confirmed')" [severity]="isDraft ? 'warning' : (receipt.status === 'PAID' ? 'secondary' : 'success')"></p-tag>
       <button *ngIf="receipt.fileName" type="button" pButton class="p-button-outlined p-button-sm" icon="pi pi-image" label="View original" aria-label="View original receipt" (click)="openPreview()"></button>
     </div>
   </div>
@@ -11,13 +11,13 @@
     <div>
       <p class="eyebrow">{{ group.name }} / Receipt</p>
       <h2>{{ isDraft ? 'Review your receipt' : (receipt.store || 'Receipt') }}</h2>
-      <p class="muted">{{ isDraft ? 'Check the details, assign each item, then save or confirm.' : 'This receipt is confirmed and included in your group balances.' }}</p>
+      <p class="muted">{{ isReadOnly ? 'This receipt is paid and settled. It no longer affects the group balances.' : (isDraft ? 'Check the details, assign each item, then save or confirm.' : 'You can still adjust this confirmed receipt; balances update when you save.') }}</p>
     </div>
     <span class="receipt-id">#{{ receipt.id.slice(0, 8) }}</span>
   </div>
 
   <div *ngIf="receipt.extractionNote" class="info-banner" role="note"><i class="pi pi-info-circle"></i><span>{{ receipt.extractionNote }}</span></div>
-  <div *ngIf="!isDraft" class="info-banner success-banner" role="note"><i class="pi pi-check-circle"></i><span>Confirmed receipts cannot be edited. Go to Balances to see how they affect the group.</span></div>
+  <div *ngIf="!isDraft" class="info-banner success-banner" role="note"><i class="pi pi-check-circle"></i><span>{{ isReadOnly ? 'This receipt is marked as paid and no longer affects the group balances.' : 'Confirmed receipts can still be edited; balances recalculate when you save.' }}</span></div>
   <div *ngIf="error" class="error-banner" role="alert"><i class="pi pi-exclamation-circle"></i>{{ error }}</div>
 
   <div class="editor-grid">
@@ -25,9 +25,9 @@
       <section class="form-card" aria-labelledby="details-title">
         <div class="section-heading"><div><span class="section-number">01</span><h3 id="details-title">Receipt details</h3></div></div>
         <div class="field-grid">
-          <div class="field field-wide"><label for="receipt-store">Store or receipt name</label><input id="receipt-store" pInputText [(ngModel)]="store" [disabled]="!isDraft || busy" placeholder="e.g. Saturday brunch" autocomplete="off" /></div>
-          <div class="field"><label for="receipt-date">Date</label><input id="receipt-date" pInputText type="date" [(ngModel)]="date" [disabled]="!isDraft || busy" /></div>
-          <div class="field"><label for="receipt-payer">Paid by</label><select id="receipt-payer" [(ngModel)]="payerId" [disabled]="!isDraft || busy"><option value="">Choose a person</option><option *ngFor="let member of group.members" [value]="member.id">{{ member.name }}</option></select></div>
+          <div class="field field-wide"><label for="receipt-store">Store or receipt name</label><input id="receipt-store" pInputText [(ngModel)]="store" [disabled]="isReadOnly || busy" placeholder="e.g. Saturday brunch" autocomplete="off" /></div>
+          <div class="field"><label for="receipt-date">Date</label><input id="receipt-date" pInputText type="date" [(ngModel)]="date" [disabled]="isReadOnly || busy" /></div>
+          <div class="field"><label for="receipt-payer">Paid by</label><select id="receipt-payer" [(ngModel)]="payerId" [disabled]="isReadOnly || busy"><option value="">Choose a person</option><option *ngFor="let member of group.members" [value]="member.id">{{ member.name }}</option></select></div>
         </div>
       </section>
 
@@ -36,22 +36,32 @@
         <p class="help-copy">Choose who shared each item. Split evenly, or enter exact amounts or percentages.</p>
         <div *ngIf="!items.length" class="inline-empty">No items yet. Add one to start splitting this receipt.</div>
         <div class="item-editor" *ngFor="let item of items; let i = index">
-          <div class="item-topline"><span class="item-index">ITEM {{ (i + 1).toString().padStart(2, '0') }}</span><button *ngIf="isDraft" type="button" class="icon-text danger-text" [disabled]="busy" (click)="removeItem(i)" [attr.aria-label]="'Remove item ' + (i + 1)"><i class="pi pi-trash"></i> Remove</button></div>
+          <div class="item-topline"><span class="item-index">ITEM {{ (i + 1).toString().padStart(2, '0') }}</span><button *ngIf="!isReadOnly" type="button" class="icon-text danger-text" [disabled]="busy" (click)="removeItem(i)" [attr.aria-label]="'Remove item ' + (i + 1)"><i class="pi pi-trash"></i> Remove</button></div>
           <div class="item-fields">
-            <div class="field item-description"><label [for]="'item-description-' + i">Description</label><input [id]="'item-description-' + i" pInputText [(ngModel)]="item.description" [disabled]="!isDraft || busy" placeholder="What was it?" /></div>
-            <div class="field amount-field"><label [for]="'item-amount-' + i">Amount ({{ group.currency }})</label><input [id]="'item-amount-' + i" pInputText inputmode="decimal" [(ngModel)]="item.amount" [disabled]="!isDraft || busy" (ngModelChange)="recalculateTotals()" placeholder="0.00" /></div>
+            <div class="field item-description"><label [for]="'item-description-' + i">Description</label><input [id]="'item-description-' + i" pInputText [(ngModel)]="item.description" [disabled]="isReadOnly || busy" placeholder="What was it?" /></div>
+            <div class="field amount-field"><label [for]="'item-amount-' + i">Amount ({{ group.currency }})</label><input [id]="'item-amount-' + i" pInputText inputmode="decimal" [(ngModel)]="item.amount" [disabled]="isReadOnly || busy" (ngModelChange)="recalculateTotals()" placeholder="0.00" /></div>
           </div>
-          <div class="split-header"><span>Shared by</span><div class="split-controls"><select [attr.aria-label]="'Split method for item ' + (i + 1)" [ngModel]="item.mode" (ngModelChange)="changeMode(item, $event)" [disabled]="!isDraft || busy"><option value="AMOUNT">By amount</option><option value="PERCENT">By percent</option></select><button *ngIf="isDraft" type="button" class="text-button" [disabled]="busy" (click)="splitEqually(item)">Split equally</button></div></div>
+          <div class="item-discount-row">
+            <div class="field discount-amount"><label [for]="'item-discount-' + i">Discount ({{ group.currency }})</label><input [id]="'item-discount-' + i" pInputText inputmode="decimal" [(ngModel)]="item.discount" [disabled]="isReadOnly || busy" placeholder="0.00" (ngModelChange)="recalculateTotal()" /></div>
+            <div *ngIf="(parseMoney(item.discount) ?? 0) > 0" class="field discount-mode">
+              <label>How is this discount shared?</label>
+              <div class="discount-mode-options">
+                <label class="mode-option"><input type="radio" name="discount-mode-{{ i }}" value="PRICE" [checked]="item.discountMode === 'PRICE'" [disabled]="isReadOnly || busy" (change)="item.discountMode = 'PRICE'" /><span>In the product price</span><small>Only the people who take this item benefit.</small></label>
+                <label class="mode-option"><input type="radio" name="discount-mode-{{ i }}" value="FINAL" [checked]="item.discountMode === 'FINAL'" [disabled]="isReadOnly || busy" (change)="item.discountMode = 'FINAL'" /><span>At the final distribution</span><small>Everyone benefits in proportion to what they pay.</small></label>
+              </div>
+            </div>
+          </div>
+          <div class="split-header"><span>Shared by</span><div class="split-controls"><select [attr.aria-label]="'Split method for item ' + (i + 1)" [ngModel]="item.mode" (ngModelChange)="changeMode(item, $event)" [disabled]="isReadOnly || busy"><option value="AMOUNT">By amount</option><option value="PERCENT">By percent</option></select><button *ngIf="!isReadOnly" type="button" class="text-button" [disabled]="busy" (click)="splitEqually(item)">Split equally</button></div></div>
           <div class="share-list">
             <div *ngFor="let member of group.members" class="share-row" [class.share-row-inactive]="!isIncluded(item, member.id)">
-              <label class="person-check"><input type="checkbox" [checked]="isIncluded(item, member.id)" [disabled]="!isDraft || busy" (change)="toggleMember(item, member.id)" /><span class="person-avatar small-avatar">{{ member.name.slice(0, 1).toUpperCase() }}</span><span>{{ member.name }}</span></label>
-              <div class="share-value" *ngIf="share(item, member.id) as memberShare"><input [attr.aria-label]="member.name + ' share for item ' + (i + 1) + (item.mode === 'PERCENT' ? ' percent' : ' amount')" pInputText inputmode="decimal" [(ngModel)]="memberShare.value" [disabled]="!isDraft || busy" /><span>{{ item.mode === 'PERCENT' ? '%' : group.currency }}</span></div>
+              <label class="person-check"><input type="checkbox" [checked]="isIncluded(item, member.id)" [disabled]="isReadOnly || busy" (change)="toggleMember(item, member.id)" /><span class="person-avatar small-avatar">{{ member.name.slice(0, 1).toUpperCase() }}</span><span>{{ member.name }}</span></label>
+              <div class="share-value" *ngIf="share(item, member.id) as memberShare"><input [attr.aria-label]="member.name + ' share for item ' + (i + 1) + (item.mode === 'PERCENT' ? ' percent' : ' amount')" pInputText inputmode="decimal" [(ngModel)]="memberShare.value" [disabled]="isReadOnly || busy" /><span>{{ item.mode === 'PERCENT' ? '%' : group.currency }}</span></div>
               <span *ngIf="!isIncluded(item, member.id)" class="not-included">Not included</span>
             </div>
           </div>
           <div class="share-footer"><span>Assigned</span><strong>{{ shareTotal(item) }}</strong><span class="muted">of {{ item.mode === 'PERCENT' ? '100.00%' : formatMoney(parseMoney(item.amount) ?? 0, group.currency) }}</span></div>
         </div>
-        <button *ngIf="isDraft" type="button" class="add-item-button" [disabled]="busy" (click)="addItem()"><i class="pi pi-plus"></i> Add another item</button>
+        <button *ngIf="!isReadOnly" type="button" class="add-item-button" [disabled]="busy" (click)="addItem()"><i class="pi pi-plus"></i> Add another item</button>
       </section>
     </div>
 
@@ -59,20 +69,21 @@
       <section class="form-card summary-card" aria-labelledby="summary-title">
         <div class="section-heading"><div><span class="section-number">03</span><h3 id="summary-title">Summary</h3></div></div>
         <div class="summary-fields">
-          <div class="field summary-row"><label for="summary-subtotal">Subtotal <span class="sub-label">(items: {{ formatMoney(itemSum, group.currency) }})</span></label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-subtotal" pInputText inputmode="decimal" [(ngModel)]="subtotal" [disabled]="!isDraft || busy" (ngModelChange)="recalculateTotal()" /></div></div>
-          <div class="field summary-row"><label for="summary-discount">Discount</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-discount" pInputText inputmode="decimal" [(ngModel)]="discount" [disabled]="!isDraft || busy" (ngModelChange)="recalculateTotal()" /></div></div>
-          <div class="field summary-row"><label for="summary-tax">Tax</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-tax" pInputText inputmode="decimal" [(ngModel)]="tax" [disabled]="!isDraft || busy" (ngModelChange)="recalculateTotal()" /></div></div>
-          <div class="field summary-row"><label for="summary-tip">Tip</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-tip" pInputText inputmode="decimal" [(ngModel)]="tip" [disabled]="!isDraft || busy" (ngModelChange)="recalculateTotal()" /></div></div>
-          <div class="field summary-row total-row"><label for="summary-total">Total</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-total" pInputText inputmode="decimal" [(ngModel)]="total" [disabled]="!isDraft || busy" /></div></div>
+          <div class="field summary-row"><label for="summary-subtotal">Subtotal <span class="sub-label">(items: {{ formatMoney(itemSum, group.currency) }})</span></label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-subtotal" pInputText inputmode="decimal" [(ngModel)]="subtotal" [disabled]="isReadOnly || busy" (ngModelChange)="recalculateTotal()" /></div></div>
+          <div class="field summary-row"><label for="summary-discount">Discount <span class="sub-label">(savings, already in the item prices)</span></label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-discount" pInputText [value]="moneyInput(discountSum)" disabled /></div></div>
+          <div class="field summary-row"><label for="summary-tax">Tax</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-tax" pInputText inputmode="decimal" [(ngModel)]="tax" [disabled]="isReadOnly || busy" (ngModelChange)="recalculateTotal()" /></div></div>
+          <div class="field summary-row"><label for="summary-tip">Tip</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-tip" pInputText inputmode="decimal" [(ngModel)]="tip" [disabled]="isReadOnly || busy" (ngModelChange)="recalculateTotal()" /></div></div>
+          <div class="field summary-row total-row"><label for="summary-total">Total</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-total" pInputText inputmode="decimal" [(ngModel)]="total" [disabled]="isReadOnly || busy" /></div></div>
         </div>
-        <p class="summary-note"><i class="pi pi-info-circle"></i> Check the amounts against your receipt before confirming. Balances update after confirmation.</p>
+        <p class="summary-note"><i class="pi pi-info-circle"></i> {{ 'The item prices already include the discounts. ' + (isDraft ? 'Check the amounts against your receipt before confirming.' : 'Balances update when you save changes.') }}</p>
       </section>
       <section *ngIf="receipt.fileName" class="attachment-card"><div class="attachment-icon"><i class="pi pi-file"></i></div><div class="attachment-copy"><strong>Original receipt</strong><span [title]="receipt.fileName">{{ receipt.fileName }}</span></div><button type="button" class="icon-button" aria-label="Preview original receipt" (click)="openPreview()"><i class="pi pi-external-link"></i></button></section>
-      <div *ngIf="isDraft" class="action-card">
-        <div *ngIf="attempted && validationErrors.length" class="validation-list" role="alert"><strong>Check before confirming</strong><ul><li *ngFor="let issue of validationErrors">{{ issue }}</li></ul></div>
-        <button type="button" pButton label="Confirm receipt" icon="pi pi-check" class="primary-action" [loading]="busy" (click)="save(true)"></button>
-        <button type="button" pButton label="Save as draft" class="p-button-outlined secondary-action" [disabled]="busy" (click)="save()"></button>
-        <p class="action-hint">Drafts can be unfinished. Only confirmed receipts affect balances.</p>
+      <div *ngIf="!isReadOnly" class="action-card">
+        <div *ngIf="attempted && validationErrors.length" class="validation-list" role="alert"><strong>Check before {{ isDraft ? 'confirming' : 'saving' }}</strong><ul><li *ngFor="let issue of validationErrors">{{ issue }}</li></ul></div>
+        <button *ngIf="isDraft" type="button" pButton label="Confirm receipt" icon="pi pi-check" class="primary-action" [loading]="busy" (click)="save(true)"></button>
+        <button *ngIf="!isDraft" type="button" pButton label="Save changes" icon="pi pi-save" class="primary-action" [loading]="busy" (click)="save()"></button>
+        <button *ngIf="isDraft" type="button" pButton label="Save as draft" class="p-button-outlined secondary-action" [disabled]="busy" (click)="save()"></button>
+        <p class="action-hint">{{ isDraft ? 'Drafts can be unfinished. Only confirmed receipts affect balances.' : 'Changes update the group balances immediately.' }}</p>
       </div>
     </aside>
   </div>

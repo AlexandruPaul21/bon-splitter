@@ -1,10 +1,11 @@
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
-import { ConfirmationService, MessageService } from 'primeng/api';
+import { ConfirmationService, MessageService, MenuItem } from 'primeng/api';
+import { ContextMenu, ContextMenuModule } from 'primeng/contextmenu';
 import { DialogModule } from 'primeng/dialog';
 import { InputTextModule } from 'primeng/inputtext';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
@@ -21,8 +22,8 @@ type GroupTab = 'receipts' | 'balances' | 'members';
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonModule, ConfirmDialogModule, DialogModule, InputTextModule,
-    ProgressSpinnerModule, TagModule, ToastModule, ReceiptEditorComponent],
+  imports: [CommonModule, FormsModule, ButtonModule, ConfirmDialogModule, ContextMenuModule, DialogModule,
+    InputTextModule, ProgressSpinnerModule, TagModule, ToastModule, ReceiptEditorComponent],
   providers: [ConfirmationService],
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.css']
@@ -55,6 +56,16 @@ export class AppComponent implements OnInit {
   private balancesRequest = 0;
   balancesError = '';
   selectedReceiptId: string | null = null;
+  @ViewChild('receiptMenu') receiptMenu!: ContextMenu;
+  contextReceipt: Receipt | null = null;
+  receiptMenuItems: MenuItem[] = [{
+    label: 'Delete receipt',
+    icon: 'pi pi-trash',
+    command: () => {
+      if (this.contextReceipt) this.askDeleteReceipt(this.contextReceipt);
+      this.contextReceipt = null;
+    }
+  }];
 
   groupDialogOpen = false;
   groupName = '';
@@ -68,19 +79,34 @@ export class AppComponent implements OnInit {
   selectedFile: File | null = null;
   uploadBusy = false;
   uploadError = '';
+  markPaidBusy = false;
   loggingOut = false;
   mobileNavOpen = false;
+  theme: 'light' | 'dark' = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
 
   readonly formatMoney = formatMoney;
 
   get activeGroup(): Group | undefined { return this.groups.find(group => group.id === this.activeGroupId); }
   get selectedReceipt(): Receipt | undefined { return this.receipts.find(receipt => receipt.id === this.selectedReceiptId); }
   get confirmedReceipts(): Receipt[] { return this.receipts.filter(receipt => receipt.status === 'CONFIRMED'); }
+  get paidReceipts(): Receipt[] { return this.receipts.filter(receipt => receipt.status === 'PAID'); }
   get draftReceipts(): Receipt[] { return this.receipts.filter(receipt => receipt.status === 'DRAFT'); }
-  get totalSpent(): number { return this.confirmedReceipts.reduce((sum, receipt) => sum + receipt.total, 0); }
-  get sortedReceipts(): Receipt[] { return [...this.receipts].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')); }
+  get totalSpent(): number { return this.receipts.filter(receipt => receipt.status !== 'DRAFT').reduce((sum, receipt) => sum + receipt.total, 0); }
+  get sortedReceipts(): Receipt[] {
+    const priority: Record<Receipt['status'], number> = { DRAFT: 0, CONFIRMED: 1, PAID: 2 };
+    return [...this.receipts].sort((a, b) =>
+      priority[a.status] - priority[b.status] || (b.date ?? '').localeCompare(a.date ?? ''));
+  }
 
   ngOnInit(): void { this.checkSession(); }
+
+  toggleTheme(): void {
+    this.theme = this.theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('receipt-share-theme', this.theme);
+    document.documentElement.setAttribute('data-theme', this.theme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', this.theme === 'dark' ? '#0e1512' : '#f9faf8');
+  }
 
   checkSession(): void {
     this.authLoading = true;
@@ -99,7 +125,7 @@ export class AppComponent implements OnInit {
     if (this.authBusy) return;
     this.authError = '';
     if (!this.password) { this.authError = 'Enter a password to continue.'; return; }
-    if (this.setupRequired && this.password.length < 12) { this.authError = 'Use at least 12 characters for your password.'; return; }
+    if (this.setupRequired && this.password.length < 4) { this.authError = 'Use at least 4 characters for your password.'; return; }
     if (this.setupRequired && this.password !== this.confirmPassword) { this.authError = 'Passwords do not match.'; return; }
     this.authBusy = true;
     (this.setupRequired ? this.api.setup(this.password) : this.api.login(this.password))
@@ -305,11 +331,72 @@ export class AppComponent implements OnInit {
 
   onReceiptChanged(receipt: Receipt): void {
     if (this.activeGroupId !== receipt.groupId) return;
+    const previous = this.receipts.find(item => item.id === receipt.id);
     this.receipts = this.receipts.map(item => item.id === receipt.id ? receipt : item);
     if (receipt.status === 'CONFIRMED') {
-      this.selectedReceiptId = null;
+      if (previous?.status === 'DRAFT') this.selectedReceiptId = null;
       this.refreshBalances(receipt.groupId);
     }
+  }
+
+  onReceiptContextMenu(event: MouseEvent, receipt: Receipt): void {
+    event.preventDefault();
+    if (receipt.status === 'PAID') return;
+    this.contextReceipt = receipt;
+    this.receiptMenu.show(event);
+  }
+
+  askDeleteReceipt(receipt: Receipt): void {
+    const group = this.activeGroup;
+    this.confirmation.confirm({
+      header: 'Delete receipt?',
+      message: `Delete "${receipt.store || 'Untitled receipt'}" from ${group?.name ?? 'this group'}? This removes its items and any file, and cannot be undone.`,
+      icon: 'pi pi-trash',
+      acceptLabel: 'Delete receipt',
+      rejectLabel: 'Cancel',
+      acceptButtonStyleClass: 'p-button-danger',
+      accept: () => this.deleteReceipt(receipt)
+    });
+  }
+
+  private deleteReceipt(receipt: Receipt): void {
+    this.api.deleteReceipt(receipt.id).subscribe({
+      next: () => {
+        if (this.activeGroupId === receipt.groupId) {
+          this.receipts = this.receipts.filter(item => item.id !== receipt.id);
+          if (this.selectedReceiptId === receipt.id) this.selectedReceiptId = null;
+        }
+        this.refreshBalances(receipt.groupId);
+        this.showSuccess('Receipt deleted.');
+      },
+      error: error => this.showError(this.errorText(error, 'Could not delete the receipt.'))
+    });
+  }
+
+  askMarkPaid(): void {
+    const group = this.activeGroup;
+    if (!group || this.markPaidBusy || !this.confirmedReceipts.length) return;
+    const count = this.confirmedReceipts.length;
+    this.confirmation.confirm({
+      header: 'Payments done?',
+      message: `Mark ${count} ${count === 1 ? 'confirmed receipt' : 'confirmed receipts'} in ${group.name} as paid? Their balances will be cleared.`,
+      icon: 'pi pi-check-circle',
+      acceptLabel: 'Mark as paid',
+      rejectLabel: 'Not yet',
+      accept: () => this.markGroupPaid(group.id)
+    });
+  }
+
+  private markGroupPaid(groupId: string): void {
+    this.markPaidBusy = true;
+    this.api.markGroupPaid(groupId).pipe(finalize(() => { this.markPaidBusy = false; })).subscribe({
+      next: () => {
+        this.refreshReceipts(groupId);
+        this.refreshBalances(groupId);
+        this.showSuccess('Payments done. The confirmed receipts are now paid and settled.');
+      },
+      error: error => this.showError(this.errorText(error, 'Could not mark payments as done.'))
+    });
   }
 
   displayDate(date: string | null): string {

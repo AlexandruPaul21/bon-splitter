@@ -23,10 +23,10 @@ class SplitCalculatorTest {
         val receipt = example(
             items = listOf(ReceiptItem("Dinner", 1_001, SplitMode.AMOUNT,
                 listOf(Share("a", 501), Share("b", 500)))),
-            discount = 101, tax = 83, tip = 117, total = 1_100
+            discount = 101, tax = 83, tip = 117, total = 1_201
         )
         val charges = SplitCalculator.charges(receipt, people.map { it.id }.toSet())
-        assertEquals(1_100L, charges.values.sum())
+        assertEquals(1_201L, charges.values.sum(), "Total is the subtotal plus tax and tip; the informational discount does not reduce it")
         assertEquals(0L, charges.getValue("c"))
     }
 
@@ -51,6 +51,46 @@ class SplitCalculatorTest {
         val invalid = example(items = listOf(ReceiptItem("Dinner", 1_000, SplitMode.PERCENT, listOf(Share("a", 9900)))))
         assertThrows(IllegalArgumentException::class.java) { SplitCalculator.charges(invalid, people.map { it.id }.toSet()) }
         assertThrows(IllegalArgumentException::class.java) { SplitCalculator.charges(example(total = 999), people.map { it.id }.toSet()) }
+    }
+
+    @Test
+    fun `price mode keeps an item discount with the people who bought the item`() {
+        val receipt = example(
+            items = listOf(
+                ReceiptItem("Wine", 1_000, SplitMode.AMOUNT, discount = 100, shares = listOf(Share("a", 1_000))),
+                ReceiptItem("Dinner", 1_000, SplitMode.AMOUNT, shares = listOf(Share("b", 1_000)))
+            ),
+            discount = 100, total = 2_000
+        )
+        val charges = SplitCalculator.charges(receipt, people.map { it.id }.toSet())
+        assertEquals(1_000L, charges.getValue("a"), "Alice's wine already reflects her discount")
+        assertEquals(1_000L, charges.getValue("b"), "Bob's item is untouched")
+        assertEquals(0L, charges.getValue("c"))
+    }
+
+    @Test
+    fun `final mode pools an item discount for everyone proportionally`() {
+        val receipt = example(
+            items = listOf(
+                ReceiptItem("Wine", 1_000, SplitMode.AMOUNT, discount = 100, discountMode = DiscountMode.FINAL, shares = listOf(Share("a", 1_000))),
+                ReceiptItem("Dinner", 1_000, SplitMode.AMOUNT, shares = listOf(Share("b", 1_000)))
+            ),
+            discount = 100, total = 2_000
+        )
+        val charges = SplitCalculator.charges(receipt, people.map { it.id }.toSet())
+        assertEquals(1_048L, charges.getValue("a"), "Alice shares her wine saving with everyone")
+        assertEquals(952L, charges.getValue("b"), "Bob benefits from the shared saving")
+        assertEquals(0L, charges.getValue("c"))
+        assertEquals(2_000L, charges.values.sum())
+    }
+
+    @Test
+    fun `net model rejects totals where the discount is subtracted again`() {
+        val receipt = example(
+            items = listOf(ReceiptItem("Dinner", 1_000, SplitMode.AMOUNT, shares = listOf(Share("a", 1_000)))),
+            discount = 100, total = 900
+        )
+        assertThrows(IllegalArgumentException::class.java) { SplitCalculator.charges(receipt, people.map { it.id }.toSet()) }
     }
 
     private fun example(

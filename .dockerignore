@@ -1,0 +1,20 @@
+.git
+.github
+.idea
+.vscode
+.run
+*.iml
+*.md
+
+# Local app data (private; never copied into the image)
+**/data
+**/*.sqlite*
+
+# Frontend / backend build artifacts
+**/node_modules
+**/dist
+**/.angular
+**/coverage
+**/.gradle
+**/build
+**/*.log

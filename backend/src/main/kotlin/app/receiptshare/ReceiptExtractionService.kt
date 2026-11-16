@@ -22,10 +22,6 @@ class ReceiptExtractionService(
     @Value("\${receipt-share.tesseract}") private val tesseract: String
 ) {
     private val ocrSlots = Semaphore(2)
-    private val itemPattern = Regex("^(.{2,80}?)\\s+(?:[€£$]\\s*)?(\\d{1,8}[.,]\\d{2})\\s*$")
-    private val pricePattern = Regex("(\\d{1,8}[.,]\\d{2})\\s*$")
-    private val datePattern = Regex("\\b(20\\d{2})[-/.](\\d{1,2})[-/.](\\d{1,2})\\b")
-    private val excluded = Regex("\\b(total|subtotal|sub total|tax|vat|tip|discount|change|balance|cash|card|visa|mastercard)\\b", RegexOption.IGNORE_CASE)
 
     data class Extracted(val edit: ReceiptEdit, val note: String)
     data class Saved(val storedName: String, val fileName: String, val mediaType: String, val extracted: Extracted)
@@ -74,13 +70,16 @@ class ReceiptExtractionService(
         if (text.count { it.isLetterOrDigit() } > 40) parse(text, "PDF text was read locally. Check every line before confirming.")
         else {
             val renderer = PDFRenderer(doc)
+            var missing = false
             val scanned = (0 until doc.numberOfPages.coerceAtMost(2)).joinToString("\n") { page ->
                 val box = doc.getPage(page).mediaBox
                 if (box.width <= 0 || box.height <= 0 || box.width * box.height > 1_500_000f)
                     throw ResponseStatusException(HttpStatus.BAD_REQUEST, "PDF page is too large to process")
-                ocr(renderer.renderImageWithDPI(page, 130f))
+                val outcome = ocr(renderer.renderImageWithDPI(page, 130f))
+                if (outcome.tesseractMissing) missing = true
+                outcome.text
             }
-            parse(scanned, "Scanned PDF was read with local OCR (first two pages). Check and correct the draft before confirming.")
+            parseOcrText(scanned, missing, "Scanned PDF was read with local OCR (first two pages). Check and correct the draft before confirming.")
         }
     }
 
@@ -97,62 +96,77 @@ class ReceiptExtractionService(
                 val height = reader.getHeight(0)
                 if (width <= 0 || height <= 0 || width.toLong() * height > 16_000_000)
                     throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Image is too large to process")
-                return parse(ocr(reader.read(0)), "Photo was read with local OCR. Check and correct the draft before confirming.")
+                val outcome = ocr(reader.read(0))
+                return parseOcrText(outcome.text, outcome.tesseractMissing, "Photo was read with local OCR. Check and correct the draft before confirming.")
             } finally { reader.dispose() }
         }
     }
 
-    private fun ocr(image: BufferedImage): String {
-        if (!ocrSlots.tryAcquire()) return ""
+    private fun parseOcrText(text: String, tesseractMissing: Boolean, note: String): Extracted {
+        val parsed = ReceiptParser.parse(text, note)
+        if (parsed.edit.items.isNotEmpty() || text.isNotBlank()) return Extracted(parsed.edit, parsed.note)
+        return if (tesseractMissing)
+            Extracted(ReceiptEdit(), "Tesseract OCR is not available: the 'tesseract' binary was not found. Set TESSERACT_COMMAND (for example C:\\Program Files\\Tesseract-OCR\\tesseract.exe) in the backend run configuration or add Tesseract to PATH, then re-upload. The original is saved.")
+        else Extracted(ReceiptEdit(), "$note No items recognized; enter them manually.")
+    }
+
+    private data class OcrOutcome(val text: String, val tesseractMissing: Boolean)
+
+    private fun ocr(image: BufferedImage): OcrOutcome {
+        if (!ocrSlots.tryAcquire()) return OcrOutcome("", false)
         try {
             val tempDir = Path.of(dataDir).toAbsolutePath().normalize().resolve("ocr-temp")
             Files.createDirectories(tempDir)
             val work = Files.createTempFile(tempDir, "receipt-ocr-", ".png")
             try {
                 ImageIO.write(image, "png", work.toFile())
-                val output = Files.createTempFile(tempDir, "receipt-text-", ".txt")
-                try {
-                    val process = ProcessBuilder(tesseract, work.toString(), output.toString().removeSuffix(".txt"), "-l", "eng", "--psm", "6")
-                        .redirectError(ProcessBuilder.Redirect.DISCARD)
-                        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                        .start()
-                    if (!process.waitFor(12, TimeUnit.SECONDS)) { process.destroyForcibly(); process.waitFor(); return "" }
-                    return if (process.exitValue() == 0) Files.readString(output).take(50_000) else ""
-                } catch (_: java.io.IOException) {
-                    return ""
-                } finally { Files.deleteIfExists(output) }
+                // Page-segmentation mode changes a lot between tesseract versions, so run
+                // several modes and keep the text that parses into the most convincing draft.
+                var commandMissing = false
+                val candidates = listOf(4, 6, 3).mapNotNull { psm ->
+                    when (val attempt = runTesseract(work, psm)) {
+                        is TesseractAttempt.Text -> score(ReceiptParser.parse(attempt.value, "Scoring pass").edit) to attempt.value
+                        TesseractAttempt.CommandMissing -> { commandMissing = true; null }
+                        TesseractAttempt.Failed -> null
+                    }
+                }
+                val best = candidates.maxByOrNull { it.first }?.second.orEmpty()
+                return OcrOutcome(best, commandMissing && best.isEmpty())
             } finally { Files.deleteIfExists(work) }
         } finally { ocrSlots.release() }
     }
 
-    private fun parse(text: String, note: String): Extracted {
-        val lines = text.lines().map(String::trim).filter { it.isNotBlank() }.take(300)
-        val store = lines.firstOrNull()?.take(160) ?: ""
-        val date = datePattern.find(text)?.let { match ->
-            runCatching { java.time.LocalDate.of(match.groupValues[1].toInt(), match.groupValues[2].toInt(), match.groupValues[3].toInt()) }.getOrNull()
-        }
-        val items = lines.mapNotNull { line ->
-            if (excluded.containsMatchIn(line)) return@mapNotNull null
-            val match = itemPattern.find(line) ?: return@mapNotNull null
-            val cents = money(match.groupValues[2]) ?: return@mapNotNull null
-            if (cents <= 0 || cents > SplitCalculator.MAX_AMOUNT) return@mapNotNull null
-            ReceiptItem(match.groupValues[1].trim(), cents)
-        }.take(100)
-        val total = lines.lastOrNull { it.contains(Regex("\\btotal\\b", RegexOption.IGNORE_CASE)) && !it.contains(Regex("\\bsubtotal\\b", RegexOption.IGNORE_CASE)) }
-            ?.let { pricePattern.find(it)?.groupValues?.get(1)?.let(::money) }
-        val subtotal = items.sumOf { it.amount }
-        return Extracted(
-            ReceiptEdit(store = store, date = date, subtotal = subtotal, total = total ?: subtotal, items = items),
-            "$note ${if (items.isEmpty()) "No items recognized; enter them manually." else "Items and totals are guesses; verify all amounts and add tax, tip or discounts as needed."}"
-        )
+    private sealed interface TesseractAttempt {
+        data class Text(val value: String) : TesseractAttempt
+        data object CommandMissing : TesseractAttempt
+        data object Failed : TesseractAttempt
     }
 
-    private fun money(input: String): Long? {
-        val normalized = input.replace(',', '.')
-        val parts = normalized.split('.')
-        return if (parts.size == 2 && parts[1].length == 2)
-            parts[0].toLongOrNull()?.takeIf { it in 0..(SplitCalculator.MAX_AMOUNT / 100) }
-                ?.let { whole -> parts[1].toLongOrNull()?.let { cents -> whole * 100 + cents } }
-        else null
+    private fun runTesseract(work: Path, psm: Int): TesseractAttempt {
+        return try {
+            val output = Files.createTempFile(work.parent, "receipt-text-", ".txt")
+            try {
+                val process = ProcessBuilder(tesseract, work.toString(), output.toString().removeSuffix(".txt"), "-l", "eng", "--psm", psm.toString())
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .start()
+                if (!process.waitFor(12, TimeUnit.SECONDS)) { process.destroyForcibly(); process.waitFor(); TesseractAttempt.Failed }
+                else if (process.exitValue() == 0) TesseractAttempt.Text(Files.readString(output).take(50_000))
+                else TesseractAttempt.Failed
+            } finally { Files.deleteIfExists(output) }
+        } catch (_: java.io.IOException) {
+            TesseractAttempt.CommandMissing
+        }
     }
+
+    private fun score(edit: ReceiptEdit): Int {
+        var value = edit.items.size * 1000
+        if (edit.date != null) value += 500
+        if (edit.store.isNotBlank() && edit.store != "Unknown") value += 200
+        if (edit.total > 0) value += 100
+        return value
+    }
+
+    private fun parse(text: String, note: String): Extracted =
+        ReceiptParser.parse(text, note).let { Extracted(it.edit, it.note) }
 }

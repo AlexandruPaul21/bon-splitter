@@ -57,11 +57,19 @@ export class ApiService {
     return this.http.post<Receipt>(`/api/receipts/${encodeURIComponent(receiptId)}/confirm`, {}, { withCredentials: true });
   }
 
+  deleteReceipt(receiptId: string): Observable<void> {
+    return this.http.delete<void>(`/api/receipts/${encodeURIComponent(receiptId)}`, { withCredentials: true });
+  }
+
   receiptFile(receiptId: string): Observable<Blob> {
     return this.http.get(`/api/receipts/${encodeURIComponent(receiptId)}/file`, { responseType: 'blob', withCredentials: true });
   }
 
   balances(groupId: string): Observable<Balances> {
     return this.http.get<Balances>(`/api/groups/${encodeURIComponent(groupId)}/balances`, { withCredentials: true });
+  }
+
+  markGroupPaid(groupId: string): Observable<{ paid: number }> {
+    return this.http.post<{ paid: number }>(`/api/groups/${encodeURIComponent(groupId)}/receipts/paid`, {}, { withCredentials: true });
   }
 }

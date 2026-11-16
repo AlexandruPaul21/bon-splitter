@@ -9,11 +9,14 @@ data class Share(val memberId: String, val value: Long)
 data class ReceiptItem(
     val description: String,
     val amount: Long,
-    val mode: SplitMode = SplitMode.PERCENT,
-    val shares: List<Share> = emptyList()
+    val mode: SplitMode = SplitMode.AMOUNT,
+    val shares: List<Share> = emptyList(),
+    val discount: Long = 0,
+    val discountMode: DiscountMode = DiscountMode.PRICE
 )
 enum class SplitMode { AMOUNT, PERCENT }
-enum class ReceiptStatus { DRAFT, CONFIRMED }
+enum class DiscountMode { PRICE, FINAL }
+enum class ReceiptStatus { DRAFT, CONFIRMED, PAID }
 data class Receipt(
     val id: String,
     val groupId: String,

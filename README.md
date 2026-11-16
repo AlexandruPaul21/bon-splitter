@@ -1,4 +1,4 @@
-# Receipt Share
+# Bon Splitter
 
 A private, single-organizer receipt splitter. Upload a PDF or phone photo, review a locally extracted draft, allocate line items to group members, and see exactly who owes whom. The app never sends receipts to an AI or OCR cloud service; group members are names, not user accounts.
 
@@ -19,7 +19,9 @@ cd backend
 ./gradlew bootRun
 ```
 
-The backend listens on `http://localhost:8080`. On first access create a strong organizer password (12+ characters); no public user registration exists. Default private data location is `backend/data` when started from `backend/`. Set `RECEIPT_DATA_DIR=/absolute/private/path` in production. Optionally set `TESSERACT_COMMAND` to an absolute binary path. Set `RECEIPT_SECURE_COOKIE=true` for any HTTPS deployment so the session cookie is Secure; use a trusted reverse proxy and configure forwarded headers appropriately. The default `false` supports only local HTTP development. Never expose an HTTP deployment publicly. Login attempts are rate-limited (5 per 15 minutes per IP).
+The backend listens on `http://localhost:8080`. On first access create an organizer password (4+ characters); no public user registration exists. Default private data location is `backend/data` when started from `backend/`. Set `RECEIPT_DATA_DIR=/absolute/private/path` in production. Optionally set `TESSERACT_COMMAND` to an absolute binary path. Set `RECEIPT_SECURE_COOKIE=true` for any HTTPS deployment so the session cookie is Secure; use a trusted reverse proxy and configure forwarded headers appropriately. The default `false` supports only local HTTP development. Never expose an HTTP deployment publicly. Login attempts are rate-limited (5 per 15 minutes per IP).
+
+The Gradle build builds the frontend automatically and bundles it into the backend's static resources, so `bootRun` serves the whole app (UI + API) from `http://localhost:8080` — no separate frontend dev server is required. `bootJar` produces a single self-contained jar. The frontend build needs Node.js; it's skipped (up-to-date) when nothing changed. You can still run the frontend dev server below for fast UI iteration.
 
 ```bash
 cd frontend
@@ -28,7 +30,7 @@ npm test
 npm start
 ```
 
-Open the Angular development URL shown in the terminal (normally `http://localhost:4200`); its proxy forwards `/api` to the backend. For deployment, build the frontend with `npm run build`, copy its browser output into `backend/src/main/resources/static/`, and rebuild the backend. Restrict access to the organizer and use HTTPS.
+Open the Angular development URL shown in the terminal (normally `http://localhost:4200`); its proxy forwards `/api` to the backend. For deployment, just build the backend: `cd backend && ./gradlew bootJar` bundles the frontend into the jar automatically (it runs `npm install`/`npm run build` in `frontend/` and stages the output under `backend/build/generated/frontend/static`, which is served at `/`). Restrict access to the organizer and use HTTPS.
 
 ## Running from IntelliJ IDEA
 
@@ -83,7 +85,7 @@ Start the backend, then the frontend, then open `http://localhost:4200`. Create 
 
 - The working directory of the backend run config decides where `data/` goes. If you don't set `RECEIPT_DATA_DIR`, keep the working directory at `backend/` so the database lands in `backend/data` (git-ignored) rather than the repo root.
 - If a run suddenly returns `401` after editing, the in-memory session may have been lost by a restart — just sign in again; the organizer password and data persist.
-- The `.idea/gradle.xml` in the repo may reference a bundled `jbr-25`; that only runs the Gradle daemon and must be replaced with a JDK 21 as described above.
+- The committed `.idea/gradle.xml` points the Gradle daemon at `$JAVA_HOME` so it never hardcodes an IntelliJ-bundled JBR. Gradle 8.10.2 cannot run on Java 24/25 (the JBR that modern IntelliJ bundles). If IntelliJ reports "Your build is currently configured to use incompatible Java … and Gradle 8.10.2", set the Gradle JVM to a JDK 21: **Settings → Build, Execution, Deployment → Build Tools → Gradle → Gradle JVM** → choose JDK 21 (add it via **File → Project Structure → SDKs → + → JDK** if it isn't listed), or set `JAVA_HOME` to a JDK 21 and re-sync. Don't switch to Gradle 9.1.0 just to run the bundled JBR — the project's Kotlin 1.9.25 plugin does not support Gradle 9.
 
 ## How splitting works
 

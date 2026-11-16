@@ -34,3 +34,56 @@ dependencies {
 tasks.withType<Test> { useJUnitPlatform() }
 
 kotlin { compilerOptions { freeCompilerArgs.add("-Xjsr305=strict") } }
+
+// Build the Angular frontend and bundle it into the backend's static resources so a
+// plain `./gradlew bootRun` or `./gradlew bootJar` serves the whole app from :8080.
+val frontendDir = file("../frontend")
+// Angular 17's application builder writes the browser bundle into a "browser" subfolder.
+val frontendDistDir = frontendDir.resolve("dist/tally-receipts-frontend/browser")
+val stagedFrontendRoot = file("$buildDir/generated/frontend")
+val stagedFrontendDir = stagedFrontendRoot.resolve("static")
+val npmCommand = if (System.getProperty("os.name").lowercase().contains("windows")) listOf("cmd", "/c", "npm") else listOf("npm")
+
+val installFrontend by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Installs the frontend dependencies (npm install) when needed."
+    workingDir(frontendDir)
+    // npm install (not ci) so node_modules is refreshed in place rather than wiped.
+    commandLine(npmCommand + listOf("install", "--no-audit", "--no-fund"))
+    inputs.file(frontendDir.resolve("package.json"))
+    inputs.file(frontendDir.resolve("package-lock.json"))
+    outputs.dir(frontendDir.resolve("node_modules"))
+}
+
+val buildFrontend by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Builds the Angular frontend into dist/."
+    dependsOn(installFrontend)
+    workingDir(frontendDir)
+    commandLine(npmCommand + listOf("run", "build"))
+    inputs.dir(frontendDir.resolve("src"))
+    inputs.file(frontendDir.resolve("angular.json"))
+    inputs.file(frontendDir.resolve("package.json"))
+    inputs.file(frontendDir.resolve("package-lock.json"))
+    outputs.dir(frontendDistDir)
+}
+
+val stageFrontend by tasks.registering(Copy::class) {
+    group = "build"
+    description = "Copies the built frontend into the backend static resources."
+    dependsOn(buildFrontend)
+    from(frontendDistDir)
+    into(stagedFrontendDir)
+}
+
+sourceSets {
+    main {
+        resources {
+            // The "static" subfolder is preserved as a path segment so files land in
+            // resources/main/static, which Spring Boot serves at the web root.
+            srcDir(stagedFrontendRoot)
+        }
+    }
+}
+
+tasks.named("processResources") { dependsOn(stageFrontend) }

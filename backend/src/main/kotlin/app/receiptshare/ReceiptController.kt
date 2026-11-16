@@ -66,6 +66,13 @@ class ReceiptController(
     @PutMapping("/receipts/{id}")
     fun update(@PathVariable id: String, @RequestBody edit: ReceiptEdit): Receipt = repository.update(id, edit)
 
+    @DeleteMapping("/receipts/{id}")
+    fun delete(@PathVariable id: String): Map<String, Boolean> {
+        val storedName = repository.delete(id)
+        if (storedName != null) Files.deleteIfExists(extraction.path(storedName))
+        return mapOf("deleted" to true)
+    }
+
     @PostMapping("/receipts/{id}/confirm")
     fun confirm(@PathVariable id: String): Receipt = repository.confirm(id)
 
@@ -91,6 +98,12 @@ class ReceiptController(
     fun balances(@PathVariable groupId: String): GroupBalances {
         val group = repository.group(groupId)
         return SplitCalculator.balances(group.members, repository.receipts(groupId))
+    }
+
+    @PostMapping("/groups/{groupId}/receipts/paid")
+    fun markPaid(@PathVariable groupId: String): Map<String, Int> {
+        val paid = repository.markGroupPaid(groupId)
+        return mapOf("paid" to paid)
     }
 }
 

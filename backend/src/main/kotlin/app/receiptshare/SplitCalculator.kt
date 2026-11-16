@@ -11,13 +11,17 @@ object SplitCalculator {
         listOf(receipt.subtotal, receipt.discount, receipt.tax, receipt.tip, receipt.total).forEach(::validAmount)
         require(receipt.items.sumOf { validAmount(it.amount); it.amount } == receipt.subtotal) { "Items must add up to the subtotal" }
         require(receipt.subtotal > 0 && receipt.total > 0) { "Receipt must have a positive amount" }
-        require(receipt.discount <= receipt.subtotal) { "Discount cannot exceed subtotal" }
-        require(receipt.subtotal - receipt.discount + receipt.tax + receipt.tip == receipt.total) { "Subtotal − discount + tax + tip must equal total" }
+        require(receipt.subtotal + receipt.tax + receipt.tip == receipt.total) { "Subtotal + tax + tip must equal total" }
 
+        // Items carry their effective (net) price, so the discount is informational savings
+        // that only matters for redistribution: PRICE keeps it in the item's price, FINAL
+        // pools it for everyone in proportion to what they pay.
         val gross = members.associateWith { 0L }.toMutableMap()
+        var pooled = 0L
         for (item in receipt.items) {
             require(item.description.isNotBlank()) { "Each item needs a description" }
             require(item.amount > 0L) { "Each item needs a positive price" }
+            require(item.discount >= 0L) { "Item discount cannot be negative" }
             require(item.shares.isNotEmpty()) { "Assign every item" }
             require(item.shares.map { it.memberId }.toSet().size == item.shares.size) { "Duplicate member in item" }
             require(item.shares.all { it.memberId in members && it.value >= 0 && it.value <= MAX_AMOUNT }) { "Invalid item share" }
@@ -32,9 +36,14 @@ object SplitCalculator {
                 }
             }
             amounts.forEach { (id, amount) -> gross[id] = gross.getValue(id) + amount }
+            if (item.discountMode == DiscountMode.FINAL) {
+                // Share the saving with everyone: gross the item back up and pool the saving.
+                pooled += item.discount
+                prorate(item.discount, amounts).forEach { (id, amount) -> gross[id] = gross.getValue(id) + amount }
+            }
         }
-        val discount = prorate(receipt.discount, gross)
-        val net = gross.mapValues { (id, amount) -> amount - discount.getValue(id) }
+        val poolShare = if (pooled == 0L) gross.mapValues { 0L } else prorate(pooled, gross)
+        val net = gross.mapValues { (id, amount) -> amount - poolShare.getValue(id) }
         require(net.values.all { it >= 0 }) { "Discount allocation exceeds someone's item share" }
         require(net.values.sum() > 0 || receipt.tax + receipt.tip == 0L) { "Cannot distribute tax or tip on a fully discounted receipt" }
         val tax = prorate(receipt.tax, net)

@@ -2,12 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Tally — Shared expenses, simply settled</title>
+  <title>Bon Splitter — Shared expenses, simply settled</title>
   <base href="/">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f9faf8">
   <meta name="description" content="Organize receipts, split shared expenses, and see exactly who owes whom.">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem('receipt-share-theme');
+        var dark = theme === 'dark' || (theme !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', dark ? '#0e1512' : '#f9faf8');
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <app-root></app-root>

@@ -53,7 +53,7 @@ class OrganizerAuth(private val jdbc: JdbcTemplate) {
     fun exists(): Boolean = jdbc.queryForObject("SELECT COUNT(*) FROM organizer", Int::class.java)!! > 0
 
     fun setup(password: String, request: HttpServletRequest, response: HttpServletResponse) {
-        if (password.length < 12 || password.length > 256) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must be 12–256 characters")
+        if (password.length < 4 || password.length > 256) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must be 4–256 characters")
         try {
             jdbc.update("INSERT INTO organizer(id, password_hash) VALUES (1, ?)", encoder.encode(password))
         } catch (_: org.springframework.dao.DataAccessException) {

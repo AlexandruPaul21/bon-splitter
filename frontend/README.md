@@ -1,4 +1,4 @@
-# Tally frontend
+# Bon Splitter frontend
 
 Private, single-organizer receipt splitter built with Angular 17 and PrimeNG 17. Requires Node.js 18.13+ (or Node 20/22) and npm.
 
