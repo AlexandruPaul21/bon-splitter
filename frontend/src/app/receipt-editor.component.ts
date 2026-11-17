@@ -10,7 +10,7 @@ import { ProgressSpinnerModule } from 'primeng/progressspinner';
 import { TagModule } from 'primeng/tag';
 import { finalize, of, switchMap } from 'rxjs';
 import { ApiService } from './api.service';
-import { DiscountMode, Group, Receipt, ReceiptItem, ReceiptUpdate, ShareMode } from './models';
+import { DiscountMode, Group, Receipt, ReceiptDiscountMode, ReceiptItem, ReceiptUpdate, ShareMode } from './models';
 import { equalShares, formatMoney, moneyInput, parseMoney, parsePercent, percentInput } from './money';
 
 interface EditableShare { memberId: string; value: string }
@@ -36,6 +36,9 @@ export class ReceiptEditorComponent implements OnChanges, OnDestroy {
   date = '';
   payerId = '';
   subtotal = '0.00';
+  wholeDiscount = '0.00';
+  discountMode: ReceiptDiscountMode = 'MANUAL';
+  discountShares: EditableShare[] = [];
   tax = '0.00';
   tip = '0.00';
   total = '0.00';
@@ -73,6 +76,11 @@ export class ReceiptEditorComponent implements OnChanges, OnDestroy {
     this.date = this.receipt.date?.slice(0, 10) ?? '';
     this.payerId = this.receipt.payerId ?? '';
     this.subtotal = moneyInput(this.receipt.subtotal);
+    this.wholeDiscount = moneyInput(this.receipt.wholeDiscount);
+    this.discountMode = this.receipt.discountMode ?? 'MANUAL';
+    this.discountShares = (this.receipt.discountShares ?? []).map(share => ({
+      memberId: share.memberId, value: moneyInput(share.value)
+    }));
     this.tax = moneyInput(this.receipt.tax);
     this.tip = moneyInput(this.receipt.tip);
     this.total = moneyInput(this.receipt.total);
@@ -87,22 +95,53 @@ export class ReceiptEditorComponent implements OnChanges, OnDestroy {
         value: item.mode === 'PERCENT' ? percentInput(share.value) : moneyInput(share.value)
       }))
     }));
+    this.ensureDiscountShares();
     this.attempted = false;
     this.error = '';
   }
 
   get itemSum(): number {
-    return this.items.reduce((sum, item) => sum + (parseMoney(item.amount) ?? 0), 0);
+    return this.items.reduce((sum, item) => {
+      const amount = parseMoney(item.amount) ?? 0;
+      const discount = parseMoney(item.discount) ?? 0;
+      return sum + Math.max(amount - discount, 0);
+    }, 0);
+  }
+
+  initialPrice(item: EditableItem): string {
+    return formatMoney(parseMoney(item.amount) ?? 0, this.group.currency);
+  }
+
+  /** The price actually split among the item's people: the actual price when the
+   * discount is folded in, the full initial price when the saving is split at the end. */
+  splitPrice(item: EditableItem): number {
+    const amount = parseMoney(item.amount) ?? 0;
+    const discount = parseMoney(item.discount) ?? 0;
+    return item.discountMode === 'FINAL' ? amount : Math.max(amount - discount, 0);
+  }
+
+  effectivePrice(item: EditableItem): string {
+    const amount = parseMoney(item.amount) ?? 0;
+    const discount = parseMoney(item.discount) ?? 0;
+    return formatMoney(Math.max(amount - discount, 0), this.group.currency);
   }
 
   get discountSum(): number {
     return this.items.reduce((sum, item) => sum + (parseMoney(item.discount) ?? 0), 0);
   }
 
+  get wholeDiscountCents(): number {
+    return parseMoney(this.wholeDiscount) ?? 0;
+  }
+
+  get discountShareTotal(): number {
+    return this.discountShares.reduce((sum, share) => sum + (parseMoney(share.value) ?? 0), 0);
+  }
+
   get summaryExpected(): number | null {
-    const values = [this.subtotal, this.tax, this.tip].map(parseMoney);
+    const values = [this.subtotal, this.wholeDiscount, this.tax, this.tip].map(parseMoney);
     if (values.some(value => value === null)) return null;
-    return values[0]! + values[1]! + values[2]!;
+    return values[0]! - values[1]! + values[2]! + values[3]!;
   }
 
   private validDate(value: string): boolean {
@@ -124,26 +163,43 @@ export class ReceiptEditorComponent implements OnChanges, OnDestroy {
       if (amount === null || amount <= 0) issues.push(`${label} needs an amount greater than zero.`);
       const discount = parseMoney(item.discount);
       if (discount === null || discount < 0) issues.push(`${label} has an invalid discount.`);
+      else if (amount !== null && discount > amount) issues.push(`${label}'s discount cannot exceed its price.`);
       if (item.shares.length === 0) issues.push(`${label} needs at least one participant.`);
       const ids = item.shares.map(share => share.memberId);
       if (new Set(ids).size !== ids.length || ids.some(id => !this.group.members.some(member => member.id === id))) {
         issues.push(`${label} contains an invalid participant.`);
       }
+      const base = this.splitPrice(item);
       const values = item.shares.map(share => item.mode === 'PERCENT' ? parsePercent(share.value) : parseMoney(share.value));
-      if (values.some(value => value === null) || values.reduce<number>((sum, value) => sum + (value ?? 0), 0) !== (item.mode === 'PERCENT' ? 10000 : amount)) {
-        issues.push(`${label} shares must add up to ${item.mode === 'PERCENT' ? '100%' : formatMoney(amount ?? 0, this.group.currency)}.`);
+      if (values.some(value => value === null) || values.reduce<number>((sum, value) => sum + (value ?? 0), 0) !== (item.mode === 'PERCENT' ? 10000 : base)) {
+        issues.push(`${label} shares must add up to ${item.mode === 'PERCENT' ? '100%' : `${formatMoney(base, this.group.currency)}${item.discountMode === 'PRICE' ? ' (the actual price after the discount)' : ''}`}.`);
       }
     }
     const subtotal = parseMoney(this.subtotal);
+    const wholeDiscount = parseMoney(this.wholeDiscount);
     const total = parseMoney(this.total);
-    if (subtotal === null || total === null || [this.tax, this.tip].some(value => parseMoney(value) === null)) {
+    if (subtotal === null || wholeDiscount === null || total === null || [this.tax, this.tip].some(value => parseMoney(value) === null)) {
       issues.push('Enter valid non-negative amounts (up to two decimal places) for all totals.');
     } else {
       if (subtotal !== this.itemSum || this.items.some(item => parseMoney(item.amount) === null || parseMoney(item.discount) === null)) {
         issues.push('Subtotal must match the sum of item amounts.');
       }
+      if (wholeDiscount > subtotal) {
+        issues.push('The whole-receipt discount cannot exceed the subtotal.');
+      }
       if (this.summaryExpected === null || this.summaryExpected < 0 || total !== this.summaryExpected) {
-        issues.push('Total must equal subtotal + tax + tip (the discounts are already reflected in the item prices).');
+        issues.push('Total must equal subtotal minus the whole-receipt discount plus tax and tip.');
+      }
+      if (wholeDiscount > 0 && this.discountMode === 'MANUAL') {
+        const ids = this.discountShares.map(share => share.memberId);
+        const sharesValid = ids.length > 0
+          && new Set(ids).size === ids.length
+          && ids.every(id => this.group.members.some(member => member.id === id))
+          && this.discountShares.every(share => (parseMoney(share.value) ?? -1) >= 0);
+        if (!sharesValid) issues.push('Enter a valid discount amount for each person.');
+        if (this.discountShareTotal !== wholeDiscount) {
+          issues.push(`The manual discount split must add up to ${formatMoney(wholeDiscount, this.group.currency)}.`);
+        }
       }
     }
     return issues;
@@ -195,14 +251,53 @@ export class ReceiptEditorComponent implements OnChanges, OnDestroy {
   splitEqually(item: EditableItem): void {
     if (this.isReadOnly || this.busy) return;
     const ids = this.group.members.filter(member => this.isIncluded(item, member.id)).map(member => member.id);
-    item.shares = equalShares(ids, parseMoney(item.amount) ?? 0, item.mode).map(share => ({
+    item.shares = equalShares(ids, this.splitPrice(item), item.mode).map(share => ({
       memberId: share.memberId,
       value: item.mode === 'PERCENT' ? percentInput(share.value) : moneyInput(share.value)
     }));
   }
 
+  setItemDiscountMode(item: EditableItem, mode: DiscountMode): void {
+    if (this.isReadOnly || this.busy || item.discountMode === mode) return;
+    item.discountMode = mode;
+    this.splitEqually(item);
+  }
+
   share(item: EditableItem, memberId: string): EditableShare | undefined {
     return item.shares.find(share => share.memberId === memberId);
+  }
+
+  discountShare(memberId: string): EditableShare | undefined {
+    return this.discountShares.find(share => share.memberId === memberId);
+  }
+
+  discountShareFor(memberId: string): EditableShare {
+    return this.discountShare(memberId) ?? (() => {
+      const created: EditableShare = { memberId, value: '0.00' };
+      this.discountShares = [...this.discountShares, created];
+      return created;
+    })();
+  }
+
+  setDiscountMode(mode: ReceiptDiscountMode): void {
+    if (this.isReadOnly || this.busy || this.discountMode === mode) return;
+    this.discountMode = mode;
+    if (mode === 'MANUAL') this.ensureDiscountShares();
+  }
+
+  private ensureDiscountShares(): void {
+    const existing = new Map(this.discountShares.map(share => [share.memberId, share.value]));
+    this.discountShares = this.group.members.map(member => ({
+      memberId: member.id,
+      value: existing.get(member.id) ?? '0.00'
+    }));
+  }
+
+  splitDiscountEqually(): void {
+    if (this.isReadOnly || this.busy || this.wholeDiscountCents <= 0) return;
+    this.discountShares = equalShares(this.group.members.map(member => member.id), this.wholeDiscountCents, 'AMOUNT').map(share => ({
+      memberId: share.memberId, value: moneyInput(share.value)
+    }));
   }
 
   shareTotal(item: EditableItem): string {
@@ -218,8 +313,9 @@ export class ReceiptEditorComponent implements OnChanges, OnDestroy {
     this.error = '';
     if ((confirm || !this.isDraft) && this.validationErrors.length) return;
     // Drafts may be unfinished, but all values included in a PUT must still be valid integers.
-    const monetaryInputs = [this.subtotal, this.tax, this.tip, this.total];
+    const monetaryInputs = [this.subtotal, this.wholeDiscount, this.tax, this.tip, this.total];
     if (monetaryInputs.some(value => parseMoney(value) === null)
+      || this.discountShares.some(share => parseMoney(share.value) === null)
       || this.items.some(item => parseMoney(item.amount) === null || parseMoney(item.discount) === null
         || item.shares.some(share => (item.mode === 'PERCENT' ? parsePercent(share.value) : parseMoney(share.value)) === null))) {
       this.error = 'Amounts must be non-negative numbers with at most two decimal places before saving.';
@@ -244,6 +340,8 @@ export class ReceiptEditorComponent implements OnChanges, OnDestroy {
       store: this.store.trim(), date: this.date || null,
       payerId: this.payerId || null,
       subtotal: parseMoney(this.subtotal)!, discount: this.discountSum,
+      wholeDiscount: parseMoney(this.wholeDiscount)!, discountMode: this.discountMode,
+      discountShares: this.discountShares.map(share => ({ memberId: share.memberId, value: parseMoney(share.value)! })),
       tax: parseMoney(this.tax)!, tip: parseMoney(this.tip)!, total: parseMoney(this.total)!,
       items: this.items.map((item): ReceiptItem => ({
         description: item.description.trim(), amount: parseMoney(item.amount)!, mode: item.mode,

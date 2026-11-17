@@ -8,47 +8,72 @@ object SplitCalculator {
     fun charges(receipt: Receipt, members: Set<String>): Map<String, Long> {
         require(receipt.items.isNotEmpty()) { "Add at least one item" }
         require(receipt.payerId in members) { "Choose a payer from this group" }
-        listOf(receipt.subtotal, receipt.discount, receipt.tax, receipt.tip, receipt.total).forEach(::validAmount)
-        require(receipt.items.sumOf { validAmount(it.amount); it.amount } == receipt.subtotal) { "Items must add up to the subtotal" }
+        listOf(receipt.subtotal, receipt.discount, receipt.wholeDiscount, receipt.tax, receipt.tip, receipt.total).forEach(::validAmount)
+        require(receipt.items.sumOf { validAmount(it.amount); validAmount(it.discount); it.amount - it.discount } == receipt.subtotal) { "Items must add up to the subtotal" }
         require(receipt.subtotal > 0 && receipt.total > 0) { "Receipt must have a positive amount" }
-        require(receipt.subtotal + receipt.tax + receipt.tip == receipt.total) { "Subtotal + tax + tip must equal total" }
+        require(receipt.wholeDiscount in 0..receipt.subtotal) { "Whole-receipt discount cannot exceed the subtotal" }
+        require(receipt.subtotal - receipt.wholeDiscount + receipt.tax + receipt.tip == receipt.total) { "Subtotal minus discount plus tax and tip must equal total" }
 
-        // Items carry their effective (net) price, so the discount is informational savings
-        // that only matters for redistribution: PRICE keeps it in the item's price, FINAL
-        // pools it for everyone in proportion to what they pay.
+        // Items carry their initial (printed) price and the marked savings on them; the
+        // price actually split is the actual price. PRICE subtracts the discount from the
+        // item's price, so only its participants pay the actual amount; FINAL charges the
+        // full price and pools the saving to be split equally among everyone on the receipt.
         val gross = members.associateWith { 0L }.toMutableMap()
         var pooled = 0L
         for (item in receipt.items) {
             require(item.description.isNotBlank()) { "Each item needs a description" }
             require(item.amount > 0L) { "Each item needs a positive price" }
-            require(item.discount >= 0L) { "Item discount cannot be negative" }
+            require(item.discount in 0..item.amount) { "Item discount cannot exceed the item price" }
             require(item.shares.isNotEmpty()) { "Assign every item" }
             require(item.shares.map { it.memberId }.toSet().size == item.shares.size) { "Duplicate member in item" }
             require(item.shares.all { it.memberId in members && it.value >= 0 && it.value <= MAX_AMOUNT }) { "Invalid item share" }
-            val amounts = when (item.mode) {
+            val weights = item.shares.associate { it.memberId to it.value }
+            // The price actually split: the actual price when the discount is folded into
+            // it, the full initial price when the saving is pooled for the end.
+            val splitBase = if (item.discountMode == DiscountMode.FINAL) item.amount else item.amount - item.discount
+            when (item.mode) {
                 SplitMode.AMOUNT -> {
-                    require(item.shares.sumOf { it.value } == item.amount) { "Amount shares must add up to item price" }
-                    item.shares.associate { it.memberId to it.value }
+                    require(item.shares.sumOf { it.value } == splitBase) { "Amount shares must add up to the price being split" }
+                    item.shares.forEach { share -> gross[share.memberId] = gross.getValue(share.memberId) + share.value }
                 }
                 SplitMode.PERCENT -> {
                     require(item.shares.sumOf { it.value } == 10_000L) { "Percentage shares must add up to 100%" }
-                    prorate(item.amount, item.shares.associate { it.memberId to it.value })
+                    prorate(splitBase, weights).forEach { (id, amount) -> gross[id] = gross.getValue(id) + amount }
                 }
             }
-            amounts.forEach { (id, amount) -> gross[id] = gross.getValue(id) + amount }
-            if (item.discountMode == DiscountMode.FINAL) {
-                // Share the saving with everyone: gross the item back up and pool the saving.
-                pooled += item.discount
-                prorate(item.discount, amounts).forEach { (id, amount) -> gross[id] = gross.getValue(id) + amount }
+            if (item.discountMode == DiscountMode.FINAL) pooled += item.discount
+        }
+        // Savings pooled by FINAL items are split equally at the end among everyone on the
+        // receipt, i.e. everyone assigned to at least one item, whatever they pay.
+        val participants = receipt.items.flatMap { item -> item.shares.map { it.memberId } }.distinct()
+        val poolShare = if (pooled == 0L) emptyMap() else prorate(pooled, participants.associateWith { 1L })
+        var net = gross.mapValues { (id, amount) -> amount - (poolShare[id] ?: 0L) }
+
+        // The whole-receipt discount is a deduction from the subtotal that reduces what
+        // people pay: MANUAL takes the user's per-person amounts, PRODUCTS prorates it
+        // across the products so only their buyers benefit.
+        if (receipt.wholeDiscount > 0) {
+            when (receipt.discountMode) {
+                ReceiptDiscountMode.MANUAL -> {
+                    require(receipt.discountShares.map { it.memberId }.toSet().size == receipt.discountShares.size) { "Duplicate member in the discount split" }
+                    require(receipt.discountShares.all { it.memberId in members && it.value >= 0 && it.value <= MAX_AMOUNT }) { "Invalid discount share" }
+                    require(receipt.discountShares.sumOf { it.value } == receipt.wholeDiscount) { "Manual discount shares must add up to the whole-receipt discount" }
+                    net = net.mapValues { (id, amount) -> amount - (receipt.discountShares.firstOrNull { it.memberId == id }?.value ?: 0L) }
+                }
+                ReceiptDiscountMode.PRODUCTS -> {
+                    val shares = prorate(receipt.wholeDiscount, gross)
+                    net = net.mapValues { (id, amount) -> amount - shares.getValue(id) }
+                }
             }
         }
-        val poolShare = if (pooled == 0L) gross.mapValues { 0L } else prorate(pooled, gross)
-        val net = gross.mapValues { (id, amount) -> amount - poolShare.getValue(id) }
-        require(net.values.all { it >= 0 }) { "Discount allocation exceeds someone's item share" }
-        require(net.values.sum() > 0 || receipt.tax + receipt.tip == 0L) { "Cannot distribute tax or tip on a fully discounted receipt" }
-        val tax = prorate(receipt.tax, net)
-        val tip = prorate(receipt.tip, net)
-        return net.mapValues { (id, amount) -> amount + tax.getValue(id) + tip.getValue(id) }
+
+        // An equal end-of-receipt split can push someone below zero (they effectively get
+        // money back); tax and tip are then only prorated over those who still pay.
+        val taxable = net.filterValues { it > 0 }
+        require(taxable.isNotEmpty() || receipt.tax + receipt.tip == 0L) { "Cannot distribute tax or tip on a fully discounted receipt" }
+        val tax = prorate(receipt.tax, taxable)
+        val tip = prorate(receipt.tip, taxable)
+        return net.mapValues { (id, amount) -> amount + (tax[id] ?: 0L) + (tip[id] ?: 0L) }
             .also { require(it.values.sum() == receipt.total) { "Receipt does not reconcile" } }
     }
 

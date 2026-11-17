@@ -42,24 +42,34 @@ object ReceiptParser {
 
         val items = mutableListOf<ReceiptItem>()
         var orphan = 0L
+        var wholeDiscount = 0L
+        var afterSubtotal = false
         var pending: String? = null
         for (line in body) {
             if (unitPriceLineRegex.containsMatchIn(line)) continue
+            if (subtotalWord.containsMatchIn(line)) afterSubtotal = true
             val parsed = amountLine(line)
             if (parsed == null) { pending = line.take(160); continue }
             val (desc, cents, isDiscount) = parsed
             if (cents <= 0 || cents > SplitCalculator.MAX_AMOUNT) { pending = null; continue }
             if (isDiscount) {
-                // Attach the marked savings to the item it follows so each item can choose
-                // how its discount is shared. Kaufland's "Economisiti ... RON!" line already
-                // prints the discounted price, so gross the item back up to its list price;
-                // other discounts (Lidl, older Kaufland) leave the printed price untouched.
-                // Discounts too large for the item they follow are shared by everyone instead.
+                // A discount printed after the Subtotal line (for example Kaufland's
+                // "Kaufland Card XTRA" promo at the bottom of the items) applies to the
+                // whole receipt, not to one product. Keep it separate so the editor can
+                // ask whether to prorate it into the products or split it manually
+                // between people at the end.
+                if (afterSubtotal) { wholeDiscount += cents; pending = null; continue }
+                // Otherwise attach the marked savings to the item it follows so each item
+                // can choose how its discount is shared. Kaufland's "Economisiti ...
+                // RON!" line already prints the discounted price, so gross the item back
+                // up to its list price; other discounts (Lidl, older Kaufland) leave the
+                // printed price untouched. Discounts too large for the item they follow
+                // are shared by everyone instead.
                 if (items.isNotEmpty()) {
                     val index = items.lastIndex
                     val item = items[index]
                     val gross = if (grossUpWord.containsMatchIn(line)) item.amount + cents else item.amount
-                    if (gross > cents) items[index] = item.copy(amount = gross, discount = item.discount + cents)
+                    if (gross > item.discount + cents) items[index] = item.copy(amount = gross, discount = item.discount + cents)
                     else orphan += cents
                 } else {
                     orphan += cents
@@ -74,28 +84,39 @@ object ReceiptParser {
             pending = null
         }
 
-        // Receipt-level discounts (not tied to one item) apply to everyone in proportion
-        // to their item's price, so the summary discount always matches the items.
+        // Receipt-level discounts that appear before any Subtotal line (for example a
+        // fully discounted Lidl product) apply to everyone in proportion to what they
+        // still pay, so an item that already carries a large per-item discount is never
+        // driven below zero. Discounts printed after the Subtotal line stay separate as
+        // the whole-receipt discount for the editor to allocate.
         if (orphan > 0 && items.isNotEmpty()) {
-            val totalGross = items.sumOf { it.amount }
-            if (totalGross > 0) {
+            val weights = items.map { (it.amount - it.discount).coerceAtLeast(0L) }
+            val totalWeight = weights.sum()
+            if (totalWeight > 0) {
                 var remaining = orphan
                 items.forEachIndexed { index, item ->
-                    val share = if (index == items.lastIndex) remaining else item.amount * orphan / totalGross
-                    items[index] = item.copy(discount = item.discount + share)
-                    remaining -= share
+                    val share = if (index == items.lastIndex) remaining else weights[index] * orphan / totalWeight
+                    val applied = minOf(share, weights[index])
+                    items[index] = item.copy(discount = item.discount + applied)
+                    remaining -= applied
                 }
             }
         }
-        // Items always show the effective price: what you actually pay for each one.
-        items.forEachIndexed { index, item -> items[index] = item.copy(amount = item.amount - item.discount) }
-
-        val subtotal = items.sumOf { it.amount }
+        // Items keep their gross (printed) price and carry their own marked savings;
+        // the calculator subtracts them when the discount is shared "in the product
+        // price". Whole-receipt discounts stay entirely separate so the editor can ask
+        // whether they should be prorated into the products or manually split between
+        // people at the end.
+        val subtotal = items.sumOf { it.amount - it.discount }
         val discount = items.sumOf { it.discount }
-        val total = printedTotal?.takeIf { it == subtotal } ?: subtotal
+        val total = printedTotal ?: (subtotal - wholeDiscount).coerceAtLeast(0)
         val resultNote = "$note ${if (items.isEmpty()) "No items recognized; enter them manually." else "Items and totals are guesses; verify all amounts and add tax, tip or discounts as needed."}"
         return Result(
-            ReceiptEdit(store = store, date = date, subtotal = subtotal, discount = discount, total = total, items = items),
+            ReceiptEdit(
+                store = store, date = date, subtotal = subtotal, discount = discount,
+                wholeDiscount = wholeDiscount, discountMode = ReceiptDiscountMode.MANUAL, discountShares = emptyList(),
+                tax = 0, tip = 0, total = total, items = items
+            ),
             resultNote
         )
     }

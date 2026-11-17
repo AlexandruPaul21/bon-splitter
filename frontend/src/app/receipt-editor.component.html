@@ -39,16 +39,20 @@
           <div class="item-topline"><span class="item-index">ITEM {{ (i + 1).toString().padStart(2, '0') }}</span><button *ngIf="!isReadOnly" type="button" class="icon-text danger-text" [disabled]="busy" (click)="removeItem(i)" [attr.aria-label]="'Remove item ' + (i + 1)"><i class="pi pi-trash"></i> Remove</button></div>
           <div class="item-fields">
             <div class="field item-description"><label [for]="'item-description-' + i">Description</label><input [id]="'item-description-' + i" pInputText [(ngModel)]="item.description" [disabled]="isReadOnly || busy" placeholder="What was it?" /></div>
-            <div class="field amount-field"><label [for]="'item-amount-' + i">Amount ({{ group.currency }})</label><input [id]="'item-amount-' + i" pInputText inputmode="decimal" [(ngModel)]="item.amount" [disabled]="isReadOnly || busy" (ngModelChange)="recalculateTotals()" placeholder="0.00" /></div>
+            <div class="field amount-field"><label [for]="'item-amount-' + i">Initial price ({{ group.currency }})</label><input [id]="'item-amount-' + i" pInputText inputmode="decimal" [(ngModel)]="item.amount" [disabled]="isReadOnly || busy" (ngModelChange)="recalculateTotals()" placeholder="0.00" /></div>
           </div>
           <div class="item-discount-row">
-            <div class="field discount-amount"><label [for]="'item-discount-' + i">Discount ({{ group.currency }})</label><input [id]="'item-discount-' + i" pInputText inputmode="decimal" [(ngModel)]="item.discount" [disabled]="isReadOnly || busy" placeholder="0.00" (ngModelChange)="recalculateTotal()" /></div>
+            <div class="field discount-amount"><label [for]="'item-discount-' + i">Discount ({{ group.currency }})</label><input [id]="'item-discount-' + i" pInputText inputmode="decimal" [(ngModel)]="item.discount" [disabled]="isReadOnly || busy" placeholder="0.00" (ngModelChange)="recalculateTotals()" /></div>
             <div *ngIf="(parseMoney(item.discount) ?? 0) > 0" class="field discount-mode">
               <label>How is this discount shared?</label>
               <div class="discount-mode-options">
-                <label class="mode-option"><input type="radio" name="discount-mode-{{ i }}" value="PRICE" [checked]="item.discountMode === 'PRICE'" [disabled]="isReadOnly || busy" (change)="item.discountMode = 'PRICE'" /><span>In the product price</span><small>Only the people who take this item benefit.</small></label>
-                <label class="mode-option"><input type="radio" name="discount-mode-{{ i }}" value="FINAL" [checked]="item.discountMode === 'FINAL'" [disabled]="isReadOnly || busy" (change)="item.discountMode = 'FINAL'" /><span>At the final distribution</span><small>Everyone benefits in proportion to what they pay.</small></label>
+                <label class="mode-option"><input type="radio" name="discount-mode-{{ i }}" value="PRICE" [checked]="item.discountMode === 'PRICE'" [disabled]="isReadOnly || busy" (change)="setItemDiscountMode(item, 'PRICE')" /><span>In the product price</span><small>Only the people who take this item benefit from the lower actual price.</small></label>
+                <label class="mode-option"><input type="radio" name="discount-mode-{{ i }}" value="FINAL" [checked]="item.discountMode === 'FINAL'" [disabled]="isReadOnly || busy" (change)="setItemDiscountMode(item, 'FINAL')" /><span>Split at the end</span><small>Everyone on the receipt shares this saving equally.</small></label>
               </div>
+              <p class="discount-effect">
+                <ng-container *ngIf="item.discountMode === 'PRICE'">Initial price <strong>{{ initialPrice(item) }}</strong>, actual price <strong>{{ effectivePrice(item) }}</strong> — the people who take this item split only the actual price.</ng-container>
+                <ng-container *ngIf="item.discountMode === 'FINAL'">The people who take this item split the full initial price <strong>{{ initialPrice(item) }}</strong>; everyone on the receipt splits the saving equally at settlement.</ng-container>
+              </p>
             </div>
           </div>
           <div class="split-header"><span>Shared by</span><div class="split-controls"><select [attr.aria-label]="'Split method for item ' + (i + 1)" [ngModel]="item.mode" (ngModelChange)="changeMode(item, $event)" [disabled]="isReadOnly || busy"><option value="AMOUNT">By amount</option><option value="PERCENT">By percent</option></select><button *ngIf="!isReadOnly" type="button" class="text-button" [disabled]="busy" (click)="splitEqually(item)">Split equally</button></div></div>
@@ -59,7 +63,7 @@
               <span *ngIf="!isIncluded(item, member.id)" class="not-included">Not included</span>
             </div>
           </div>
-          <div class="share-footer"><span>Assigned</span><strong>{{ shareTotal(item) }}</strong><span class="muted">of {{ item.mode === 'PERCENT' ? '100.00%' : formatMoney(parseMoney(item.amount) ?? 0, group.currency) }}</span></div>
+          <div class="share-footer"><span>Assigned</span><strong>{{ shareTotal(item) }}</strong><span class="muted">of {{ item.mode === 'PERCENT' ? '100.00%' : formatMoney(splitPrice(item), group.currency) }}</span></div>
         </div>
         <button *ngIf="!isReadOnly" type="button" class="add-item-button" [disabled]="busy" (click)="addItem()"><i class="pi pi-plus"></i> Add another item</button>
       </section>
@@ -70,12 +74,25 @@
         <div class="section-heading"><div><span class="section-number">03</span><h3 id="summary-title">Summary</h3></div></div>
         <div class="summary-fields">
           <div class="field summary-row"><label for="summary-subtotal">Subtotal <span class="sub-label">(items: {{ formatMoney(itemSum, group.currency) }})</span></label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-subtotal" pInputText inputmode="decimal" [(ngModel)]="subtotal" [disabled]="isReadOnly || busy" (ngModelChange)="recalculateTotal()" /></div></div>
-          <div class="field summary-row"><label for="summary-discount">Discount <span class="sub-label">(savings, already in the item prices)</span></label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-discount" pInputText [value]="moneyInput(discountSum)" disabled /></div></div>
+          <div class="field summary-row"><label for="summary-discount">Item discounts <span class="sub-label">(savings on the items)</span></label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-discount" pInputText [value]="moneyInput(discountSum)" disabled /></div></div>
+          <div class="field summary-row"><label for="summary-whole-discount">Whole-receipt discount <span class="sub-label">(e.g. a Card XTRA promo)</span></label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-whole-discount" pInputText inputmode="decimal" [(ngModel)]="wholeDiscount" [disabled]="isReadOnly || busy" placeholder="0.00" (ngModelChange)="recalculateTotal()" /></div></div>
+          <div *ngIf="wholeDiscountCents > 0" class="whole-discount-options">
+            <label class="mode-option"><input type="radio" name="whole-discount-mode" value="MANUAL" [checked]="discountMode === 'MANUAL'" [disabled]="isReadOnly || busy" (change)="setDiscountMode('MANUAL')" /><span>Split it between people</span><small>Assign each person's saving manually at the end.</small></label>
+            <label class="mode-option"><input type="radio" name="whole-discount-mode" value="PRODUCTS" [checked]="discountMode === 'PRODUCTS'" [disabled]="isReadOnly || busy" (change)="setDiscountMode('PRODUCTS')" /><span>Distribute it among the products</span><small>Only the people who take those products benefit.</small></label>
+          </div>
+          <div *ngIf="wholeDiscountCents > 0 && discountMode === 'MANUAL'" class="whole-discount-shares">
+            <div class="split-header"><span>Who keeps how much</span><button *ngIf="!isReadOnly" type="button" class="text-button" [disabled]="busy" (click)="splitDiscountEqually()">Split equally</button></div>
+            <div *ngFor="let member of group.members" class="share-row">
+              <label class="person-check"><span class="person-avatar small-avatar">{{ member.name.slice(0, 1).toUpperCase() }}</span><span>{{ member.name }}</span></label>
+              <div class="share-value"><input [attr.aria-label]="member.name + ' discount'" pInputText inputmode="decimal" [(ngModel)]="discountShareFor(member.id).value" [disabled]="isReadOnly || busy" /><span>{{ group.currency }}</span></div>
+            </div>
+            <div class="share-footer"><span>Assigned</span><strong>{{ formatMoney(discountShareTotal, group.currency) }}</strong><span class="muted">of {{ formatMoney(wholeDiscountCents, group.currency) }}</span></div>
+          </div>
           <div class="field summary-row"><label for="summary-tax">Tax</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-tax" pInputText inputmode="decimal" [(ngModel)]="tax" [disabled]="isReadOnly || busy" (ngModelChange)="recalculateTotal()" /></div></div>
           <div class="field summary-row"><label for="summary-tip">Tip</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-tip" pInputText inputmode="decimal" [(ngModel)]="tip" [disabled]="isReadOnly || busy" (ngModelChange)="recalculateTotal()" /></div></div>
           <div class="field summary-row total-row"><label for="summary-total">Total</label><div class="money-control"><span>{{ group.currency }}</span><input id="summary-total" pInputText inputmode="decimal" [(ngModel)]="total" [disabled]="isReadOnly || busy" /></div></div>
         </div>
-        <p class="summary-note"><i class="pi pi-info-circle"></i> {{ 'The item prices already include the discounts. ' + (isDraft ? 'Check the amounts against your receipt before confirming.' : 'Balances update when you save changes.') }}</p>
+        <p class="summary-note"><i class="pi pi-info-circle"></i> {{ 'Item prices are the initial printed prices; the price actually split is always the actual price. A discount either lowers that actual price for the item\'s people, or — split at the end — is shared equally by everyone on the receipt. The whole-receipt discount lowers the Total. ' + (isDraft ? 'Check the amounts against your receipt before confirming.' : 'Balances update when you save changes.') }}</p>
       </section>
       <section *ngIf="receipt.fileName" class="attachment-card"><div class="attachment-icon"><i class="pi pi-file"></i></div><div class="attachment-copy"><strong>Original receipt</strong><span [title]="receipt.fileName">{{ receipt.fileName }}</span></div><button type="button" class="icon-button" aria-label="Preview original receipt" (click)="openPreview()"><i class="pi pi-external-link"></i></button></section>
       <div *ngIf="!isReadOnly" class="action-card">

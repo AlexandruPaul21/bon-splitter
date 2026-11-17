@@ -46,8 +46,8 @@ class ReceiptRepository(private val jdbc: JdbcTemplate) {
 
     fun deleteMember(groupId: String, memberId: String) {
         group(groupId)
-        if (jdbc.queryForObject("SELECT COUNT(*) FROM receipts WHERE group_id = ? AND payer_id = ?", Int::class.java, groupId, memberId)!! > 0 ||
-            jdbc.queryForObject("SELECT COUNT(*) FROM allocations a JOIN receipt_items i ON a.item_id = i.id JOIN receipts r ON i.receipt_id = r.id WHERE r.group_id = ? AND a.member_id = ?", Int::class.java, groupId, memberId)!! > 0
+        if (jdbc.queryForObject("SELECT COUNT(*) FROM receipts WHERE group_id = ? AND payer_id = ?", Int::class.java, groupId, memberId) > 0 ||
+            jdbc.queryForObject("SELECT COUNT(*) FROM allocations a JOIN receipt_items i ON a.item_id = i.id JOIN receipts r ON i.receipt_id = r.id WHERE r.group_id = ? AND a.member_id = ?", Int::class.java, groupId, memberId) > 0
         ) throw ResponseStatusException(HttpStatus.CONFLICT, "This person appears on a receipt; keep them in the group")
         if (jdbc.update("DELETE FROM members WHERE id = ? AND group_id = ?", memberId, groupId) == 0) notFound()
     }
@@ -64,6 +64,8 @@ class ReceiptRepository(private val jdbc: JdbcTemplate) {
                 status = ReceiptStatus.valueOf(rs.getString("status")), store = rs.getString("store"),
                 date = rs.getString("receipt_date")?.let(LocalDate::parse),
                 subtotal = rs.getLong("subtotal"), discount = rs.getLong("discount"),
+                wholeDiscount = rs.getLong("whole_discount"),
+                discountMode = ReceiptDiscountMode.valueOf(rs.getString("discount_mode")),
                 tax = rs.getLong("tax"), tip = rs.getLong("tip"), total = rs.getLong("total"),
                 payerId = rs.getString("payer_id"), extractionNote = rs.getString("extraction_note"),
                 fileName = rs.getString("file_name")
@@ -74,7 +76,10 @@ class ReceiptRepository(private val jdbc: JdbcTemplate) {
                 jdbc.query("SELECT member_id, value FROM allocations WHERE item_id = ? ORDER BY member_id", { inner, _ -> Share(inner.getString(1), inner.getLong(2)) }, rs.getString("id")),
                 discount = rs.getLong("discount"), discountMode = DiscountMode.valueOf(rs.getString("discount_mode")))
         }, id)
-        return row.copy(items = items)
+        val discountShares = jdbc.query("SELECT member_id, value FROM discount_shares WHERE receipt_id = ? ORDER BY member_id", { rs, _ ->
+            Share(rs.getString(1), rs.getLong(2))
+        }, id)
+        return row.copy(items = items, discountShares = discountShares)
     }
 
     fun file(id: String): Pair<String, String>? = jdbc.query("SELECT stored_name, media_type FROM receipts WHERE id = ?", { rs, _ ->
@@ -95,32 +100,39 @@ class ReceiptRepository(private val jdbc: JdbcTemplate) {
         val old = receipt(id)
         if (old.status == ReceiptStatus.PAID) throw ResponseStatusException(HttpStatus.CONFLICT, "Paid receipts cannot be edited")
         require(edit.store.length <= 160 && edit.items.size <= 200) { "Too many items or a store name that's too long" }
-        listOf(edit.subtotal, edit.discount, edit.tax, edit.tip, edit.total).forEach { require(it in 0..SplitCalculator.MAX_AMOUNT) { "Invalid amount" } }
+        listOf(edit.subtotal, edit.discount, edit.wholeDiscount, edit.tax, edit.tip, edit.total).forEach { require(it in 0..SplitCalculator.MAX_AMOUNT) { "Invalid amount" } }
         val memberIds = members(old.groupId).map { it.id }.toSet()
         require(edit.payerId == null || edit.payerId in memberIds) { "Payer must belong to the group" }
+        require(edit.discountShares.size <= 100) { "Too many discount shares" }
+        require(edit.discountShares.all { it.memberId in memberIds && it.value >= 0 && it.value <= SplitCalculator.MAX_AMOUNT }) { "Invalid discount share or member" }
+        require(edit.discountShares.map { it.memberId }.distinct().size == edit.discountShares.size) { "Duplicate member in discount split" }
         edit.items.forEach { item ->
             require(item.description.length <= 200 && item.amount in 0..SplitCalculator.MAX_AMOUNT) { "Invalid item" }
-            require(item.discount >= 0) { "Item discount cannot be negative" }
+            require(item.discount in 0..item.amount) { "Item discount cannot exceed the item price" }
             require(item.shares.size <= 100) { "Too many shares" }
             require(item.shares.all { it.memberId in memberIds && it.value >= 0 && it.value <= SplitCalculator.MAX_AMOUNT }) { "Invalid share or member" }
             require(item.shares.map { it.memberId }.distinct().size == item.shares.size) { "Duplicate member in item" }
         }
         if (old.status == ReceiptStatus.CONFIRMED) {
             SplitCalculator.charges(
-                old.copy(subtotal = edit.subtotal, discount = edit.discount, tax = edit.tax, tip = edit.tip, total = edit.total, payerId = edit.payerId, items = edit.items),
+                old.copy(subtotal = edit.subtotal, discount = edit.discount, wholeDiscount = edit.wholeDiscount,
+                    discountMode = edit.discountMode, discountShares = edit.discountShares,
+                    tax = edit.tax, tip = edit.tip, total = edit.total, payerId = edit.payerId, items = edit.items),
                 memberIds
             )
         }
-        jdbc.update("""UPDATE receipts SET store = ?, receipt_date = ?, subtotal = ?, discount = ?, tax = ?, tip = ?, total = ?, payer_id = ? WHERE id = ?""",
-            edit.store.trim(), edit.date?.toString(), edit.subtotal, edit.discount, edit.tax, edit.tip, edit.total, edit.payerId, id)
+        jdbc.update("""UPDATE receipts SET store = ?, receipt_date = ?, subtotal = ?, discount = ?, whole_discount = ?, discount_mode = ?, tax = ?, tip = ?, total = ?, payer_id = ? WHERE id = ?""",
+            edit.store.trim(), edit.date?.toString(), edit.subtotal, edit.discount, edit.wholeDiscount, edit.discountMode.name, edit.tax, edit.tip, edit.total, edit.payerId, id)
         jdbc.update("DELETE FROM allocations WHERE item_id IN (SELECT id FROM receipt_items WHERE receipt_id = ?)", id)
         jdbc.update("DELETE FROM receipt_items WHERE receipt_id = ?", id)
+        jdbc.update("DELETE FROM discount_shares WHERE receipt_id = ?", id)
         edit.items.forEachIndexed { index, item ->
             val itemId = UUID.randomUUID().toString()
             jdbc.update("INSERT INTO receipt_items(id, receipt_id, position, description, amount, mode, discount, discount_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 itemId, id, index, item.description.trim(), item.amount, item.mode.name, item.discount, item.discountMode.name)
             item.shares.forEach { share -> jdbc.update("INSERT INTO allocations(item_id, member_id, value) VALUES (?, ?, ?)", itemId, share.memberId, share.value) }
         }
+        edit.discountShares.forEach { share -> jdbc.update("INSERT INTO discount_shares(receipt_id, member_id, value) VALUES (?, ?, ?)", id, share.memberId, share.value) }
         return receipt(id)
     }
 
@@ -147,6 +159,7 @@ class ReceiptRepository(private val jdbc: JdbcTemplate) {
         if (row.first == ReceiptStatus.PAID.name) throw ResponseStatusException(HttpStatus.CONFLICT, "Paid receipts cannot be deleted")
         jdbc.update("DELETE FROM allocations WHERE item_id IN (SELECT id FROM receipt_items WHERE receipt_id = ?)", id)
         jdbc.update("DELETE FROM receipt_items WHERE receipt_id = ?", id)
+        jdbc.update("DELETE FROM discount_shares WHERE receipt_id = ?", id)
         jdbc.update("DELETE FROM receipts WHERE id = ?", id)
         return row.second
     }

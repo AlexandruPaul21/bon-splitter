@@ -18,7 +18,7 @@ class ReceiptParserTest {
         assertTrue(edit.items.any { it.description == "NUTELLA.200G" && it.amount == 1_399L })
         assertTrue(edit.items.any { it.description == "CIUCAS BERE 0,5L (7 x 2,69)" && it.amount == 1_883L })
         assertTrue(edit.items.any { it.description == "GARANTIE AMBALAJ * (7 x 0,50)" && it.amount == 350L })
-        assertTrue(edit.items.any { it.description == "URSUS COOLER 4x0,5L" && it.amount == 1_337L })
+        assertTrue(edit.items.any { it.description == "URSUS COOLER 4x0,5L" && it.amount == 1_996L })
         assertTrue(edit.items.all { it.amount > 0 })
     }
 
@@ -27,12 +27,14 @@ class ReceiptParserTest {
         val edit = ReceiptParser.parse(KAUFLAND_GROCERIES, "note").edit
         assertEquals("Kaufland", edit.store)
         assertEquals(LocalDate.of(2026, 5, 8), edit.date)
-        assertEquals(27_412, edit.subtotal, "Effective prices add up to the printed total")
-        assertEquals(4_450, edit.discount)
-        assertEquals(27_412, edit.total)
-        assertTrue(edit.items.any { it.description == "NEW YORK MANZAT (0,320 KG)" && it.amount == 5_306L })
-        assertTrue(edit.items.any { it.description == "FP AFINE 125 GR (3 x 12,99)" && it.amount == 1_792L })
-        assertTrue(edit.items.any { it.description == "PORTOCALE PL. 1 KG" && it.amount == 430L })
+        assertEquals(29_912, edit.subtotal, "Item prices add up to the printed Subtotal")
+        assertEquals(1_950, edit.discount, "Only the per-item Card XTRA savings stay on the items")
+        assertEquals(2_500, edit.wholeDiscount, "The promo-section Card XTRA is a whole-receipt discount")
+        assertEquals(ReceiptDiscountMode.MANUAL, edit.discountMode)
+        assertEquals(27_412, edit.total, "The printed TOTAL already subtracts the whole-receipt discount")
+        assertTrue(edit.items.any { it.description == "NEW YORK MANZAT (0,320 KG)" && it.amount == 5_757L })
+        assertTrue(edit.items.any { it.description == "FP AFINE 125 GR (3 x 12,99)" && it.amount == 3_897L })
+        assertTrue(edit.items.any { it.description == "PORTOCALE PL. 1 KG" && it.amount == 629L })
         assertTrue(edit.items.none { it.description.contains("XTRA", ignoreCase = true) })
         assertTrue(edit.items.none { it.description.contains("Subtotal", ignoreCase = true) })
     }
@@ -46,10 +48,10 @@ class ReceiptParserTest {
         assertEquals(2_500, edit.discount)
         assertEquals(6_728, edit.total)
         assertEquals(11, edit.items.size)
-        assertTrue(edit.items.any { it.description == "Pepene verde" && it.amount == 650L })
-        assertTrue(edit.items.any { it.description == "Gogoasa glazura cioco." && it.amount == 131L })
-        assertTrue(edit.items.any { it.description == "Berliner cu umplutura" && it.amount == 203L })
-        assertTrue(edit.items.any { it.description == "Snacks cartofi sare" && it.amount == 451L })
+        assertTrue(edit.items.any { it.description == "Pepene verde" && it.amount == 891L })
+        assertTrue(edit.items.any { it.description == "Gogoasa glazura cioco." && it.amount == 179L })
+        assertTrue(edit.items.any { it.description == "Berliner cu umplutura" && it.amount == 279L })
+        assertTrue(edit.items.any { it.description == "Snacks cartofi sare" && it.amount == 619L })
         assertTrue(edit.items.none { it.description.contains("BUC", ignoreCase = true) || it.description.contains("KG x", ignoreCase = true) })
     }
 
@@ -75,9 +77,23 @@ class ReceiptParserTest {
         assertEquals(12_906, edit.total, "The printed total is used as-is")
         assertEquals(12, edit.items.size)
         val aldis = edit.items.single { it.description == "ALDIS MICI VITA PORC" }
-        assertEquals(869L, aldis.amount, "The printed price is the effective price")
+        assertEquals(1_499L, aldis.amount, "The gross folds the printed net back up by the stated saving")
         assertEquals(630L, aldis.discount)
         assertTrue(edit.items.all { it.amount > 0 })
+    }
+
+    @Test
+    fun `receipt-level card promo is kept separate from the items`() {
+        val edit = ReceiptParser.parse(KAUFLAND_CARD_PROMO, "note").edit
+        assertEquals("Kaufland", edit.store)
+        assertEquals(1_129, edit.subtotal, "Item prices add up to the printed Subtotal")
+        assertEquals(748, edit.discount, "Only the per-item Card XTRA saving stays on the item")
+        assertEquals(200, edit.wholeDiscount, "The promo-section Card XTRA is a whole-receipt discount")
+        assertEquals(929, edit.total, "The printed TOTAL already subtracts the whole-receipt discount")
+        assertEquals(4, edit.items.size)
+        assertTrue(edit.items.all { it.amount > 0 })
+        assertTrue(edit.items.any { it.description == "SANO VITA MIX 5 SEM." && it.amount == 749L && it.discount == 748L })
+        assertTrue(edit.items.any { it.description == "PUNGA BIO" && it.amount == 10L })
     }
 
     @Test
@@ -296,6 +312,24 @@ class ReceiptParserTest {
         CARD 146,32
         Casa: 85
         DATA:14/10/2026 ORA:14-52-23
+    """.trimIndent()
+
+    private val KAUFLAND_CARD_PROMO = """
+        You saved 2,00 RON with Kaufland Card
+        Receipt Copy
+                                          Preț RON
+          Alimente
+          SANO VITA MIX 5 SEM.              7,49 C
+          Kaufland Card XTRA               -7,48
+          REGAL OTET 9% 1L                  4,89 C
+          PENNE RIGATE INTEG                6,29 C
+          PUNGA BIO                         0,10 B
+          Subtotal                        11,29
+          ----------------Promoție---------------
+          Kaufland Card XTRA              -2,00
+          TOTAL                            9,29
+          Plată card                        9,29
+          Rest                              0,00
     """.trimIndent()
 
     private val KAUFLAND_ECONOMISITI = """

@@ -17,6 +17,8 @@ export interface Group {
 
 export type ShareMode = 'AMOUNT' | 'PERCENT';
 export type DiscountMode = 'PRICE' | 'FINAL';
+/** How a discount that applies to the whole receipt is split among people. */
+export type ReceiptDiscountMode = 'MANUAL' | 'PRODUCTS';
 
 export interface Share {
   memberId: string;
@@ -26,12 +28,14 @@ export interface Share {
 
 export interface ReceiptItem {
   description: string;
+  /** Initial (printed) price, always visible; shares add up to the price actually split:
+   * amount minus discount, unless the discount is split at the end (then the full amount). */
   amount: number;
   mode: ShareMode;
   shares: Share[];
-  /** Marked savings on this item, in cents. */
+  /** Marked savings on this item, in cents; never above amount. The actual price is amount minus discount. */
   discount: number;
-  /** PRICE keeps the discount on the item; FINAL shares it with everyone proportionally. */
+  /** PRICE folds the saving into the actual price for this item's people; FINAL charges the full initial price and splits the saving equally among everyone on the receipt. */
   discountMode: DiscountMode;
 }
 
@@ -43,6 +47,11 @@ export interface Receipt {
   date: string | null;
   subtotal: number;
   discount: number;
+  /** Saving that applies to the whole receipt (e.g. a Kaufland Card XTRA promo), not one product. */
+  wholeDiscount: number;
+  /** MANUAL uses discountShares; PRODUCTS prorates the saving across the items. */
+  discountMode: ReceiptDiscountMode;
+  discountShares: Share[];
   tax: number;
   tip: number;
   total: number;
@@ -53,7 +62,8 @@ export interface Receipt {
 }
 
 export type ReceiptUpdate = Pick<Receipt,
-  'store' | 'date' | 'subtotal' | 'discount' | 'tax' | 'tip' | 'total' | 'payerId' | 'items'>;
+  'store' | 'date' | 'subtotal' | 'discount' | 'wholeDiscount' | 'discountMode' | 'discountShares'
+  | 'tax' | 'tip' | 'total' | 'payerId' | 'items'>;
 
 export interface MemberBalance {
   memberId: string;

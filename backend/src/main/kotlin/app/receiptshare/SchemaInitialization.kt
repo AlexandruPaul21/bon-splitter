@@ -15,7 +15,9 @@ class SchemaInitialization(dataSource: DataSource) {
                     2 to "db/migration/V2__paid_status.sql",
                     3 to "db/migration/V3__item_discount_split.sql",
                     4 to "db/migration/V4__item_discounts.sql",
-                    5 to "db/migration/V5__discount_included.sql"
+                    5 to "db/migration/V5__discount_included.sql",
+                    6 to "db/migration/V6__whole_receipt_discounts.sql",
+                    7 to "db/migration/V7__gross_item_discounts.sql"
                 )
                 require(version in 0..migrations.keys.max()) { "Database was created by a newer version of the app" }
                 val pending = migrations.keys.filter { it > version }.sorted()
