@@ -59,6 +59,11 @@
       </ng-container>
     </main>
   </div>
+
+  <div class="scroll-fab" *ngIf="showScrollTop || showScrollBottom">
+    <button type="button" class="scroll-fab-button" *ngIf="showScrollTop" (click)="scrollToTop()" aria-label="Scroll to top" title="Scroll to top"><i class="pi pi-arrow-up"></i></button>
+    <button type="button" class="scroll-fab-button" *ngIf="showScrollBottom" (click)="scrollToBottom()" aria-label="Scroll to bottom" title="Scroll to bottom"><i class="pi pi-arrow-down"></i></button>
+  </div>
 </div>
 
 <p-dialog header="Create a group" [(visible)]="groupDialogOpen" [modal]="true" [dismissableMask]="!groupBusy" [closable]="!groupBusy" [style]="{ width: 'min(92vw, 480px)' }" (onHide)="groupError = ''"><p class="dialog-intro">Give your shared expenses a home. You can add people next.</p><form (ngSubmit)="createGroup()"><div class="field"><label for="group-name">Group name</label><input id="group-name" pInputText name="groupName" [(ngModel)]="groupName" [disabled]="groupBusy" placeholder="e.g. Summer getaway" autocomplete="off" required /></div><div class="field"><label for="group-currency">Currency code</label><input id="group-currency" pInputText name="groupCurrency" [(ngModel)]="groupCurrency" [disabled]="groupBusy" maxlength="3" placeholder="USD" autocomplete="off" /><small class="field-hint">Enter a three-letter currency code, e.g. USD, EUR, or GBP.</small></div><p *ngIf="groupError" class="error-banner" role="alert">{{ groupError }}</p><div class="dialog-actions"><button type="button" pButton label="Cancel" class="p-button-text" [disabled]="groupBusy" (click)="groupDialogOpen = false"></button><button type="submit" pButton label="Create group" icon="pi pi-arrow-right" iconPos="right" [loading]="groupBusy"></button></div></form></p-dialog>

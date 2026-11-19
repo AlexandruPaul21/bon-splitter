@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, ViewChild, inject } from '@angular/core';
+import { Component, HostListener, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
@@ -82,6 +82,8 @@ export class AppComponent implements OnInit {
   markPaidBusy = false;
   loggingOut = false;
   mobileNavOpen = false;
+  showScrollTop = false;
+  showScrollBottom = false;
   theme: 'light' | 'dark' = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
 
   readonly formatMoney = formatMoney;
@@ -99,6 +101,20 @@ export class AppComponent implements OnInit {
   }
 
   ngOnInit(): void { this.checkSession(); }
+
+  @HostListener('window:scroll') onWindowScroll(): void { this.updateScrollButtons(); }
+  @HostListener('window:resize') onWindowResize(): void { this.updateScrollButtons(); }
+
+  updateScrollButtons(): void {
+    if (!this.authenticated) { this.showScrollTop = false; this.showScrollBottom = false; return; }
+    const top = window.scrollY;
+    const remaining = document.documentElement.scrollHeight - window.innerHeight - top;
+    this.showScrollTop = top > 320;
+    this.showScrollBottom = remaining > 320;
+  }
+
+  scrollToTop(): void { window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  scrollToBottom(): void { window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }); }
 
   toggleTheme(): void {
     this.theme = this.theme === 'dark' ? 'light' : 'dark';
@@ -193,6 +209,8 @@ export class AppComponent implements OnInit {
     this.tab = tab;
     this.mobileNavOpen = false;
     if (tab === 'balances' && this.activeGroupId) this.refreshBalances(this.activeGroupId);
+    window.scrollTo({ top: 0 });
+    setTimeout(() => this.updateScrollButtons());
   }
 
   refreshReceipts(id = this.activeGroupId): void {
@@ -202,6 +220,7 @@ export class AppComponent implements OnInit {
     this.receiptsError = '';
     this.api.receipts(id).pipe(finalize(() => {
       if (this.activeGroupId === id && this.receiptsRequest === request) this.receiptsLoading = false;
+      setTimeout(() => this.updateScrollButtons());
     })).subscribe({
       next: receipts => { if (this.activeGroupId === id && this.receiptsRequest === request) this.receipts = receipts; },
       error: error => { if (this.activeGroupId === id && this.receiptsRequest === request) this.receiptsError = this.errorText(error, 'Could not load receipts.'); }
@@ -215,6 +234,7 @@ export class AppComponent implements OnInit {
     this.balancesError = '';
     this.api.balances(id).pipe(finalize(() => {
       if (this.activeGroupId === id && this.balancesRequest === request) this.balancesLoading = false;
+      setTimeout(() => this.updateScrollButtons());
     })).subscribe({
       next: balances => { if (this.activeGroupId === id && this.balancesRequest === request) this.balances = balances; },
       error: error => { if (this.activeGroupId === id && this.balancesRequest === request) this.balancesError = this.errorText(error, 'Could not load balances.'); }

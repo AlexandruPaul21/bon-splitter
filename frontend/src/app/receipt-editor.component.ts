@@ -364,6 +364,7 @@ export class ReceiptEditorComponent implements OnChanges, OnDestroy {
       next: receipt => {
         this.receiptChanged.emit(receipt);
         this.notice.emit({ severity: 'success', detail: confirm ? 'Receipt confirmed and included in balances.' : this.isDraft ? 'Draft saved.' : 'Receipt updated; balances were recalculated.' });
+        if (!confirm && receipt.status === 'DRAFT') this.close.emit();
       },
       error: (error: HttpErrorResponse) => {
         if (saved) this.receiptChanged.emit(saved);

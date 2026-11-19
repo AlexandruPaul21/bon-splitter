@@ -252,7 +252,11 @@
   .tab-bar button { gap: 4px; }
 }
 .mobile-tab-bar { display: none; }
+.scroll-fab { display: none; }
 @media (max-width: 700px) {
+  .scroll-fab { position: fixed; right: 12px; bottom: calc(92px + var(--safe-bottom)); z-index: 31; display: flex; flex-direction: column; gap: 8px; }
+  .scroll-fab-button { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--brand); box-shadow: var(--shadow-float); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  .scroll-fab-button:hover { background: var(--brand-soft); color: var(--brand-dark); }
   .mobile-tab-bar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--surface); border-top: 1px solid var(--border); padding: 6px 10px calc(8px + var(--safe-bottom)); box-shadow: 0 -6px 24px rgba(22, 46, 36, .06); }
   .mobile-tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: 0; padding: 9px 4px; color: var(--muted); font-size: 10px; font-weight: 700; border-radius: 10px; }
   .mobile-tab i { font-size: 17px; }

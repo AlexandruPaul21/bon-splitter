@@ -27,11 +27,11 @@
 .item-index { font-size: 10px; font-weight: 800; color: var(--brand); letter-spacing: .12em; }
 .icon-text { background: transparent; border: 0; padding: 2px 0; font-size: 11px; font-weight: 700; }
 .icon-text .pi { font-size: 11px; margin-right: 4px; }
-.item-fields { display: flex; gap: 11px; margin: 17px 0 22px; }
-.item-description { flex: 1; min-width: 0; }
-.amount-field { width: 120px; }
-.item-discount-row { display: flex; align-items: flex-start; gap: 16px; margin: -10px 0 20px; padding: 12px 13px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; }
-.discount-amount { width: 120px; }
+.item-fields { display: flex; flex-wrap: wrap; gap: 11px; margin: 17px 0 22px; }
+.item-description { flex: 1 1 160px; min-width: 0; }
+.amount-field { width: 120px; flex-shrink: 0; }
+.item-discount-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; margin: -10px 0 20px; padding: 12px 13px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; }
+.discount-amount { width: 120px; flex-shrink: 0; }
 .item-discount-row .field label { font-size: 11px; font-weight: 700; color: var(--text-soft); margin-bottom: 5px; }
 .discount-mode { flex: 1; min-width: 0; }
 .discount-mode > label { display: block; }
@@ -63,10 +63,10 @@
 .add-item-button .pi { font-size: 11px; }
 .summary-card .section-heading { margin-bottom: 11px; }
 .summary-fields { display: flex; flex-direction: column; }
-.summary-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-soft); padding: 12px 0; }
-.summary-row label { display: flex; flex-direction: column; gap: 3px; color: var(--text-soft); font-weight: 600; font-size: 12px; }
+.summary-row { display: flex; flex-wrap: wrap; flex-direction: row; justify-content: space-between; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-soft); padding: 12px 0; }
+.summary-row label { display: flex; flex-direction: column; gap: 3px; color: var(--text-soft); font-weight: 600; font-size: 12px; min-width: 0; }
 .summary-row .sub-label { font-weight: 400; color: var(--muted-soft); font-size: 10px; }
-.money-control { display: flex; align-items: center; gap: 5px; color: var(--muted-soft); font-size: 10px; }
+.money-control { display: flex; align-items: center; gap: 5px; color: var(--muted-soft); font-size: 10px; flex-shrink: 0; margin-left: auto; }
 .money-control input { text-align: right; width: 82px; padding: 6px 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .total-row { border-bottom: 0; padding-top: 19px; }
 .total-row label { font-size: 14px; font-weight: 800; color: var(--text); }
@@ -103,7 +103,7 @@
   .money-control input { width: 112px; }
   .share-value input { width: 88px; padding: 8px; }
   .amount-field { width: 128px; }
-  .action-card { position: sticky; bottom: 0; z-index: 5; margin-top: -19px; padding: 16px 18px calc(16px + var(--safe-bottom)); background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -8px 24px rgba(22, 46, 36, .08); }
+  .action-card { position: sticky; bottom: calc(78px + var(--safe-bottom)); z-index: 5; margin: 0; padding: 16px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-float); }
   .action-card .primary-action { height: 46px; }
   .share-row { padding: 10px 0; }
   .person-check input { width: 20px; height: 20px; }
